@@ -98,7 +98,7 @@
     "format-ethernet": "",
     "format-disconnected": "",
     "tooltip-format": "{essid} {signalStrength}%",
-    "on-click": "foot --app-id=nmtui -e nmtui"
+    "on-click": "~/.local/bin/wifi-settings"
   },
   "bluetooth": {
     "format": "",

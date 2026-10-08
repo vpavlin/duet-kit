@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+# Wi-Fi for the Duet: switch on/off, pick a network, type a password, forget a saved one.
+# Same look as quick-settings (Shrooms palette, Tabler icons). Tapping the bar icon again closes it.
+import re, subprocess, sys, threading, time
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk
+
+ICON = {"wifi": ["", "", "", ""], "off": "", "lock": "",
+        "refresh": "", "check": "", "trash": ""}
+
+CSS = """
+window { background: #0e1216; }
+.w-title { color: #d6dde3; font-weight: bold; font-size: 15pt; }
+.w-icon { font-family: tabler-icons; font-size: 20pt; min-width: 36px; }
+.w-small { font-family: tabler-icons; font-size: 13pt; }
+.w-name { color: #d6dde3; font-weight: bold; }
+.w-sub { color: #6b7680; font-family: monospace; font-size: 9pt; }
+.w-status { color: #f0b429; font-family: monospace; font-size: 10pt; }
+row.w-row { background: #141a20; border-radius: 12px; margin: 3px 0; padding: 6px 8px; min-height: 44px; }
+row.w-row:selected, row.w-row:hover { background: #1c2229; }
+row.w-row.connected { border: 1px solid #35f0a0; }
+list { background: transparent; }
+.w-signal { color: #5aa9ff; }
+.connected .w-signal, .connected .w-sub-ok { color: #35f0a0; }
+.w-lock { color: #6b7680; }
+.w-forget { color: #e05252; background: transparent; border: none; box-shadow: none; padding: 4px 10px; }
+entry { background: #07090b; color: #d6dde3; border: 1px solid #1c2229; border-radius: 10px; min-height: 40px; }
+entry:focus-within { border-color: #35f0a0; }
+.w-go { background: #35f0a0; color: #07090b; font-weight: bold; border-radius: 99px; padding: 6px 22px; }
+.w-ghost { background: transparent; color: #d6dde3; border: 1px solid #1c2229; border-radius: 99px; padding: 6px 18px; }
+switch { background: #1c2229; }
+switch:checked { background: #35f0a0; }
+switch slider { background: #d6dde3; }
+"""
+
+
+def nmcli(*args):
+    return subprocess.run(["nmcli", *args], capture_output=True, text=True)
+
+
+def split_terse(line):
+    return [p.replace("\\:", ":").replace("\\\\", "\\") for p in re.split(r"(?<!\\):", line)]
+
+
+def scan(rescan):
+    if rescan:  # the radio needs ~6 s to collect neighbours; results vanish from the cache while it does
+        nmcli("dev", "wifi", "rescan")
+        time.sleep(7)
+    out = nmcli("-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "no").stdout
+    best = {}
+    for line in out.splitlines():
+        use, ssid, sig, sec = (split_terse(line) + ["", "", "", ""])[:4]
+        if not ssid:
+            continue
+        sig = int(sig or 0)
+        cur = best.get(ssid)
+        if not cur or use == "*" or (cur["use"] != "*" and sig > cur["signal"]):
+            best[ssid] = {"ssid": ssid, "signal": sig, "secure": sec not in ("", "--"), "use": use}
+    saved = {split_terse(l)[0] for l in nmcli("-t", "-f", "NAME,TYPE", "connection", "show").stdout.splitlines()
+             if split_terse(l)[1:2] == ["802-11-wireless"]}
+    nets = sorted(best.values(), key=lambda n: (n["use"] != "*", n["ssid"] not in saved, -n["signal"]))
+    for n in nets:
+        n["saved"] = n["ssid"] in saved
+    return nets
+
+
+def wifi_enabled():
+    return nmcli("radio", "wifi").stdout.strip() == "enabled"
+
+
+class WifiSettings(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="duet.wifi")
+        self.win = None
+        self.busy = False
+        self.open_row = None
+
+    def do_activate(self):
+        if self.win:  # second tap on the bar icon closes the panel
+            self.win.close()
+            return
+        provider = Gtk.CssProvider()
+        provider.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        self.win = Adw.ApplicationWindow(application=self, title="Wi-Fi")
+        self.win.set_default_size(560, -1)
+        self.win.set_resizable(False)
+        self.win.connect("close-request", lambda *_: self.quit() or False)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                      margin_top=22, margin_bottom=22, margin_start=26, margin_end=26)
+        head = Gtk.Box(spacing=12)
+        title = Gtk.Label(label="Wi-Fi", xalign=0, hexpand=True)
+        title.add_css_class("w-title")
+        self.switch = Gtk.Switch(active=wifi_enabled(), valign=Gtk.Align.CENTER)
+        self.switch.connect("notify::active", self.on_switch)
+        refresh = Gtk.Button(label=ICON["refresh"])
+        refresh.add_css_class("w-small")
+        refresh.add_css_class("flat")
+        refresh.connect("clicked", lambda *_: self.refresh(True))
+        head.append(title)
+        head.append(refresh)
+        head.append(self.switch)
+        box.append(head)
+
+        self.status = Gtk.Label(label="", xalign=0, wrap=True)
+        self.status.add_css_class("w-status")
+        box.append(self.status)
+
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        scroller = Gtk.ScrolledWindow(min_content_height=120, max_content_height=420, propagate_natural_height=True)
+        scroller.set_child(self.list)
+        box.append(scroller)
+
+        done = Gtk.Button(label="Done", halign=Gtk.Align.END)
+        done.add_css_class("w-go")
+        done.connect("clicked", lambda *_: self.win.close())
+        box.append(done)
+
+        self.win.set_content(box)
+        self.win.present()
+        self.refresh(True)
+
+    # ---- data ----
+    def refresh(self, rescan):
+        if not self.switch.get_active():
+            self.show([])
+            return
+        if self.busy:
+            return
+        self.busy = True
+        if rescan:
+            self.note("Scanning...")
+        threading.Thread(target=lambda: GLib.idle_add(self.show, scan(rescan)), daemon=True).start()
+
+    def show(self, nets):
+        self.busy = False
+        while (r := self.list.get_row_at_index(0)):
+            self.list.remove(r)
+        self.open_row = None
+        if not self.switch.get_active():
+            self.note("Wi-Fi is off")
+            return
+        self.note("" if nets else "No networks found - tap refresh")
+        for n in nets:
+            self.list.append(self.make_row(n))
+
+    def note(self, text):
+        self.status.set_label(text)
+        self.status.set_visible(bool(text))
+
+    # ---- rows ----
+    def make_row(self, n):
+        row = Gtk.ListBoxRow(activatable=False)
+        row.add_css_class("w-row")
+        if n["use"] == "*":
+            row.add_css_class("connected")
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        line = Gtk.Box(spacing=12)
+        ic = Gtk.Label(label=ICON["wifi"][min(3, n["signal"] // 25)])
+        ic.add_css_class("w-icon")
+        ic.add_css_class("w-signal")
+        names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+        nm = Gtk.Label(label=n["ssid"], xalign=0)
+        nm.add_css_class("w-name")
+        sub = Gtk.Label(label="connected" if n["use"] == "*" else ("saved" if n["saved"] else ("secured" if n["secure"] else "open")), xalign=0)
+        sub.add_css_class("w-sub")
+        if n["use"] == "*":
+            sub.add_css_class("w-sub-ok")
+        names.append(nm)
+        names.append(sub)
+        line.append(ic)
+        line.append(names)
+        if n["secure"] and not n["saved"]:
+            lk = Gtk.Label(label=ICON["lock"])
+            lk.add_css_class("w-small")
+            lk.add_css_class("w-lock")
+            line.append(lk)
+        if n["saved"]:
+            fg = Gtk.Button(label=ICON["trash"])
+            fg.add_css_class("w-small")
+            fg.add_css_class("w-forget")
+            fg.connect("clicked", lambda *_: self.forget(n["ssid"]))
+            line.append(fg)
+        outer.append(line)
+        form = Gtk.Box(spacing=8, visible=False)
+        entry = Gtk.Entry(visibility=False, placeholder_text="Password", hexpand=True)
+        entry.connect("activate", lambda *_: self.connect_to(n, entry.get_text()))
+        go = Gtk.Button(label="Connect")
+        go.add_css_class("w-go")
+        go.connect("clicked", lambda *_: self.connect_to(n, entry.get_text()))
+        form.append(entry)
+        form.append(go)
+        outer.append(form)
+        row.set_child(outer)
+        tap = Gtk.GestureClick()
+        tap.connect("released", lambda *_: self.tapped(n, row, form, entry))
+        line.add_controller(tap)
+        return row
+
+    def tapped(self, n, row, form, entry):
+        if n["use"] == "*":
+            return
+        if n["secure"] and not n["saved"]:
+            if self.open_row and self.open_row is not form:
+                self.open_row.set_visible(False)
+            form.set_visible(not form.get_visible())
+            self.open_row = form
+            if form.get_visible():
+                entry.grab_focus()
+        else:
+            self.connect_to(n, None)
+
+    # ---- actions ----
+    def connect_to(self, n, password):
+        self.note("Connecting to %s..." % n["ssid"])
+
+        def work():
+            if n["saved"]:
+                r = nmcli("connection", "up", "id", n["ssid"])
+            else:
+                args = ["dev", "wifi", "connect", n["ssid"]] + (["password", password] if password else [])
+                r = nmcli(*args)
+            ok = r.returncode == 0
+            if not ok and not n["saved"]:
+                nmcli("connection", "delete", "id", n["ssid"])  # drop a half-made profile after a wrong password
+            msg = "" if ok else ("Could not connect - wrong password?" if n["secure"] and not n["saved"] else "Could not connect")
+            GLib.idle_add(self.after_action, msg)
+        threading.Thread(target=work, daemon=True).start()
+
+    def forget(self, ssid):
+        def work():
+            nmcli("connection", "delete", "id", ssid)
+            GLib.idle_add(self.after_action, "Forgot %s" % ssid)
+        threading.Thread(target=work, daemon=True).start()
+
+    def after_action(self, msg):
+        self.busy = False
+        self.refresh(True)
+        if msg:
+            self.status.set_label(msg)
+            self.status.set_visible(True)
+        return False
+
+    def on_switch(self, sw, _):
+        threading.Thread(target=lambda: (nmcli("radio", "wifi", "on" if sw.get_active() else "off"),
+                                         GLib.timeout_add(1500, lambda: self.refresh(True) or False)), daemon=True).start()
+        if not sw.get_active():
+            self.show([])
+
+
+if __name__ == "__main__":
+    sys.exit(WifiSettings().run(None))

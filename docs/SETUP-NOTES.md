@@ -127,3 +127,8 @@ When PipeWire is enabled (camera via libcamera/PipeWire, screen sharing): unmask
 `./install.sh` copies the trees to the device; `./sync-from-device.sh` copies the live files back into the repo (run it after changing any tracked file, then commit and push).
 Not tracked on purpose: `/etc/shrooms/` (mesh key), SSH keys, the `claude` binary and `parakeet-cli`, anything under `~/.local/share/Logos`, camera kernel images.
 The default password `changeme` of the velvet-os image is public; change it (`passwd`) and the SSH key list on every new device.
+
+## 12. Wi-Fi panel (added 2026-10-08)
+`wifi-settings` (GTK4/libadwaita, same look as quick-settings; waybar network icon on-click, app id `duet.wifi` floats via app-tabs): on/off switch, refresh, list of
+visible networks (connected one outlined, saved ones with a forget button), tap a saved/open network to connect, tap a secured new one for an inline password field.
+Scanning takes ~6-7 s on this radio (the cache is empty while it scans), so the app triggers `nmcli dev wifi rescan`, waits, then lists. Uses nmcli only.
