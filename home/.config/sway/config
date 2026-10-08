@@ -70,6 +70,8 @@ exec ~/.local/bin/session-start
 
 # dialogs that sway floats get a visible border
 for_window [floating] border pixel 3
+# popup panels: always floating, centred on the screen
+for_window [app_id="duet\\.(wifi|quicksettings)"] floating enable, move position center
 client.focused #35f0a0 #0e1216 #d6dde3 #ff6fb5 #35f0a0
 client.focused_inactive #1c2229 #0e1216 #6b7680 #1c2229 #1c2229
 client.unfocused #1c2229 #07090b #6b7680 #1c2229 #1c2229

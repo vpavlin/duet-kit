@@ -37,6 +37,19 @@ scale slider { background: #d6dde3; min-width: 26px; min-height: 26px; border-ra
 """
 
 
+def one_panel(win, other_app_id):
+    """Only one popup panel at a time, and it goes away when you click elsewhere."""
+    subprocess.run(["swaymsg", '[app_id="%s"] kill' % other_app_id], capture_output=True)
+    seen = {"active": False}
+
+    def changed(w, _):
+        if w.is_active():
+            seen["active"] = True
+        elif seen["active"]:
+            w.close()
+    win.connect("notify::is-active", changed)
+
+
 def run(*cmd):
     return subprocess.run(cmd, capture_output=True, text=True).stdout
 
@@ -106,6 +119,7 @@ class QuickSettings(Adw.Application):
         self.win.set_default_size(560, -1)
         self.win.set_resizable(False)  # floating: shrink to the content
         self.win.connect("close-request", lambda *_: self.quit() or False)
+        one_panel(self.win, "duet.wifi")
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
                       margin_top=22, margin_bottom=22, margin_start=26, margin_end=26)

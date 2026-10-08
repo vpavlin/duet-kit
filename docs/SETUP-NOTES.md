@@ -132,3 +132,5 @@ The default password `changeme` of the velvet-os image is public; change it (`pa
 `wifi-settings` (GTK4/libadwaita, same look as quick-settings; waybar network icon on-click, app id `duet.wifi` floats via app-tabs): on/off switch, refresh, list of
 visible networks (connected one outlined, saved ones with a forget button), tap a saved/open network to connect, tap a secured new one for an inline password field.
 Scanning takes ~6-7 s on this radio (the cache is empty while it scans), so the app triggers `nmcli dev wifi rescan`, waits, then lists. Uses nmcli only.
+Both popup panels (`duet.wifi`, `duet.quicksettings`) share the same behaviour: sway rule `for_window [app_id="duet\\.(wifi|quicksettings)"] floating enable, move position center`,
+fixed size (Wi-Fi 560x480 so it still fits above the on-screen keyboard), they close when focus leaves them, and opening one kills the other (`one_panel()` in both scripts).
