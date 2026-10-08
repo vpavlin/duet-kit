@@ -1,0 +1,840 @@
+#!/usr/bin/env python3
+# Camera Settings for the Lenovo Duet: live preview, PipeWire image controls
+# (contrast / saturation / gamma), rear lens focus, histogram + clipping zebra.
+# The preview is an ordinary PipeWire client, so it shares the camera with
+# Brave. Controls are set on the libcamera PipeWire node, so every client of
+# that camera sees them.
+import datetime, glob, json, os, re, shutil, subprocess, sys, threading, time
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("Gst", "1.0")
+from gi.repository import Adw, Gdk, Gio, GLib, Gst, Gtk
+import math
+
+# The camera PipeWire instance is a second socket, video only.
+os.environ.setdefault("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+os.environ.setdefault("PIPEWIRE_REMOTE", "pipewire-0")
+Gst.init(None)
+
+CONFIG = os.path.expanduser("~/.config/duet-camera-app/settings.json")
+CAMERAS = {"front": ("ov02a10", "Front"), "rear": ("ov8856", "Rear")}
+DEFAULTS = {"contrast": 1.0, "saturation": 1.0, "gamma": 2.2}
+RANGES = {"contrast": (0.0, 2.0), "saturation": (0.0, 2.0), "gamma": (0.1, 4.0)}
+# libcamera's driver parks the lens here when the rear sensor starts streaming.
+FOCUS_DEFAULT, FOCUS_NEAR, FOCUS_FAR = 330, 600, 250
+GRID_W = 64            # analysis grid width in pixels (height follows aspect)
+ANALYSIS_FPS = 5
+CLIP_HI, CLIP_LO = 250, 5
+FPS_CHOICES = [15, 30]
+
+CSS = """
+window { background: #07090b; }
+.panel { background: #0e1216; border-left: 1px solid #1c2229; }
+.cs-title { color: #d6dde3; font-weight: bold; font-size: 15pt; }
+.cs-name { color: #d6dde3; font-weight: bold; }
+.cs-value { color: #6b7680; font-family: monospace; min-width: 64px; }
+.cs-status { color: #6b7680; font-size: 9pt; }
+.cs-section { color: #6b7680; font-size: 9pt; font-weight: bold; }
+scale trough { background: #1c2229; min-height: 8px; border-radius: 99px; }
+scale slider { background: #d6dde3; min-width: 28px; min-height: 28px; border-radius: 99px; }
+#contrast .cs-name, #contrast .cs-value { color: #f0b429; }
+#contrast scale highlight { background: #f0b429; }
+#saturation .cs-name, #saturation .cs-value { color: #ff6fb5; }
+#saturation scale highlight { background: #ff6fb5; }
+#gamma .cs-name, #gamma .cs-value { color: #9a7bff; }
+#gamma scale highlight { background: #9a7bff; }
+#focus .cs-name, #focus .cs-value { color: #5aa9ff; }
+#focus scale highlight { background: #5aa9ff; }
+button.cs-btn { background: #1c2229; color: #d6dde3; border-radius: 99px;
+  padding: 10px 22px; min-height: 28px; font-weight: bold; border: none; box-shadow: none; }
+button.cs-btn:checked { background: #35f0a0; color: #07090b; }
+button.cs-reset { color: #6b7680; }
+.cs-mod { color: #f0b429; font-size: 9pt; font-weight: bold; }
+.cs-mono { color: #d6dde3; font-family: monospace; font-size: 9pt; }
+button.cs-btn.cs-go { background: #35f0a0; color: #07090b; }
+dropdown button { background: #1c2229; color: #d6dde3; border: none; min-height: 40px; }
+"""
+
+
+def load_config():
+    try:
+        with open(CONFIG) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(cfg):
+    os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+    tmp = CONFIG + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=1)
+    os.replace(tmp, CONFIG)
+
+
+def pw_nodes():
+    """{nick: {id, sizes, gamma_prop}} for the libcamera nodes."""
+    out = subprocess.run(["pw-dump"], capture_output=True, text=True).stdout
+    nodes = {}
+    for o in json.loads(out or "[]"):
+        info = o.get("info") or {}
+        props = info.get("props") or {}
+        nick = props.get("node.nick")
+        if o.get("type") != "PipeWire:Interface:Node" or nick not in ("ov02a10", "ov8856"):
+            continue
+        params = info.get("params") or {}
+        sizes = {(p["size"]["width"], p["size"]["height"])
+                 for p in params.get("EnumFormat", [])
+                 if isinstance(p.get("size"), dict)}
+        sizes = sorted(s for s in sizes if s[0] >= 320 and abs(s[0] / s[1] - 4 / 3) < 0.02
+                       or s[0] >= 320 and abs(s[0] / s[1] - 16 / 9) < 0.02)
+        gamma = None
+        for pi in params.get("PropInfo", []):
+            if pi.get("description") == "Gamma":
+                m = re.match(r"id-([0-9a-f]+)$", str(pi.get("id")))
+                gamma = int(m.group(1), 16) if m else None
+        nodes[nick] = {"id": o["id"], "sizes": sizes, "gamma_prop": gamma}
+    return nodes
+
+
+def running_size(node_id):
+    """(w, h) if another client is streaming from this node right now, else None.
+
+    The libcamera node runs one format at a time; a second client asking for a
+    different one fails to negotiate, so we follow whoever got there first.
+    """
+    out = subprocess.run(["pw-dump", str(node_id)], capture_output=True, text=True).stdout
+    try:
+        info = json.loads(out)[0]["info"]
+    except (ValueError, IndexError, KeyError):
+        return None
+    if info.get("state") != "running":
+        return None
+    for f in info.get("params", {}).get("Format", []):
+        if isinstance(f.get("size"), dict):
+            return f["size"]["width"], f["size"]["height"]
+    return None
+
+
+def find_lens():
+    """The dw9768 sub-device node, resolved by entity name (numbers move)."""
+    for media in sorted(glob.glob("/dev/media*")):
+        out = subprocess.run(["media-ctl", "-d", media, "-p"], capture_output=True, text=True).stdout
+        m = re.search(r"entity \d+: dw9768[^\n]*\n(?:[^\n]*\n){0,4}?\s*device node name (/dev/v4l-subdev\d+)", out)
+        if m:
+            return m.group(1)
+    return None
+
+
+def spawn(*cmd):
+    try:
+        Gio.Subprocess.new(list(cmd), Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE)
+    except GLib.Error:
+        pass
+
+
+PW_ENV_PROPS = "{ contrast = 1.000 saturation = 1.000%s }"
+SIMPLE_IPA = os.path.expanduser("~/.config/libcamera/ipa/simple")
+BATTERY = "/sys/class/power_supply/sbs-12-000b"
+
+
+def pw_set(node, body):
+    """Blocking pw-cli set-param (used on exit, where async would be cut off)."""
+    subprocess.run(["pw-cli", "set-param", str(node), "Props", body],
+                   capture_output=True, timeout=5)
+
+
+def wb_gains(rgb, gamma):
+    """Per-channel gains that make a measured grey patch neutral.
+
+    The stream is encoded with the ISP gamma (c_enc = c_lin ** (1/gamma)), so
+    the patch is first decoded back to linear light: lin = (v / 255) ** gamma.
+    A neutral patch needs lin_R == lin_G == lin_B. Green is the reference
+    (gain 1); gain_R = lin_G / lin_R and gain_B = lin_G / lin_B. A CCM acts on
+    linear values (before the gamma stage), so these gains scale CCM rows.
+    """
+    lin = [max((v / 255.0) ** gamma, 1e-4) for v in rgb]
+    gr, gb = lin[1] / lin[0], lin[1] / lin[2]
+    return (max(0.5, min(2.0, gr)), 1.0, max(0.5, min(2.0, gb))), lin
+
+
+def predict_after(rgb, gains, gamma):
+    return tuple(min(255, round(255 * (((v / 255.0) ** gamma) * g) ** (1.0 / gamma)))
+                 for v, g in zip(rgb, gains))
+
+
+CCM_RE = re.compile(r"(ccm:\s*\[)([^\]]*)(\])")
+
+
+def scale_ccm_text(text, gains, stamp):
+    """Scale rows of every ccm in a tuning yaml: new = diag(gains) * old."""
+    def sub(m):
+        v = [float(x) for x in m.group(2).replace("\n", " ").replace(",", " ").split()]
+        if len(v) != 9:
+            raise ValueError("unexpected ccm length")
+        rows = [["%.4f" % (v[3 * r + c] * gains[r]) for c in range(3)] for r in range(3)]
+        indent = m.start() - (m.string.rfind("\n", 0, m.start()) + 1)
+        pad = " " * (indent + len(m.group(1)))
+        body = (",\n" + pad).join(", ".join(r) for r in rows)
+        return "# duet-camera-app white balance %s: rows scaled by %s\n%s%s %s %s" % (
+            stamp, "/".join("%.4f" % g for g in gains), " " * indent, m.group(1), body, m.group(3))
+    new, n = CCM_RE.subn(sub, text)
+    if not n:
+        raise ValueError("no ccm in tuning file")
+    return new
+
+
+def battery_ok():
+    try:
+        cap = int(open(BATTERY + "/capacity").read())
+        st = open(BATTERY + "/status").read().strip()
+    except (OSError, ValueError):
+        return True
+    return cap >= 25 or st in ("Charging", "Full")
+
+
+class Analysis:
+    """Latest histogram / clip stats from a tiny RGB grid."""
+    def __init__(self):
+        self.w = self.h = 0
+        self.rgb = b""
+        self.flags = b""      # per cell: 0 ok, 1 highlight clipped, 2 shadow crushed
+        self.hist = [0] * 64
+        self.means = (0, 0, 0)
+        self.hi = self.lo = 0.0
+
+    def update(self, data, w, h):
+        r, g, b = data[0::3], data[1::3], data[2::3]
+        n = w * h
+        hist = [0] * 64
+        flags = bytearray(n)
+        hi = lo = 0
+        for i in range(n):
+            ri, gi_, bi = r[i], g[i], b[i]
+            y = (54 * ri + 183 * gi_ + 19 * bi) >> 8          # Rec.709 luma
+            hist[y >> 2] += 1
+            mx = ri if ri > gi_ else gi_
+            mx = mx if mx > bi else bi
+            if mx >= CLIP_HI:
+                flags[i] = 1; hi += 1
+            elif mx <= CLIP_LO:
+                flags[i] = 2; lo += 1
+        self.w, self.h, self.flags, self.hist, self.rgb = w, h, bytes(flags), hist, data
+        self.means = (sum(r) // n, sum(g) // n, sum(b) // n)
+        self.hi, self.lo = 100.0 * hi / n, 100.0 * lo / n
+
+    def patch(self, fx, fy, rad=2):
+        """Mean RGB of a (2*rad+1)^2 cell patch around fractional position fx, fy."""
+        cx, cy = int(fx * self.w), int(fy * self.h)
+        tot, n = [0, 0, 0], 0
+        for y in range(max(0, cy - rad), min(self.h, cy + rad + 1)):
+            for x in range(max(0, cx - rad), min(self.w, cx + rad + 1)):
+                i = 3 * (y * self.w + x)
+                for c in range(3):
+                    tot[c] += self.rgb[i + c]
+                n += 1
+        return tuple(t / n for t in tot) if n else None
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="xyz.vpavlin.DuetCameraSettings")
+        self.win = None
+        self.cfg = load_config()
+        self.nodes = {}
+        self.lens = None
+        self.pipeline = None
+        self.cam = self.cfg.get("camera", "front")
+        self.ana = Analysis()
+        self.pending = {}      # debounce source ids
+        self.loading = False
+        self.wb_mode = False
+        self.wb_point = None
+        self.wb = None
+        self.restarting = False
+        self.following = False
+        self.retried = False
+
+    # ---- settings per camera ----
+    def cs(self):
+        return self.cfg.setdefault("cameras", {}).setdefault(self.cam, {})
+
+    def val(self, key):
+        d = dict(DEFAULTS, focus=FOCUS_DEFAULT)
+        return self.cs().get(key, d[key])
+
+    # ---- UI ----
+    def do_activate(self):
+        if self.win:
+            self.win.present()
+            return
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        prov = Gtk.CssProvider()
+        prov.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        try:
+            self.nodes = pw_nodes()
+        except (OSError, ValueError):
+            self.nodes = {}
+        self.lens = find_lens()
+
+        self.win = Adw.ApplicationWindow(application=self, title="Camera Settings")
+        self.win.set_default_size(1100, 700)
+        self.win.connect("close-request", self.on_close)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        # left: preview + histogram
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, hexpand=True,
+                       margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
+        self.picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, hexpand=True, vexpand=True)
+        self.zebra = Gtk.DrawingArea(can_target=False)
+        self.zebra.set_draw_func(self.draw_zebra)
+        ov = Gtk.Overlay(child=self.picture, hexpand=True, vexpand=True)
+        ov.add_overlay(self.zebra)
+        click = Gtk.GestureClick()
+        click.connect("pressed", self.on_pick)
+        ov.add_controller(click)
+        self.ov = ov
+        left.append(ov)
+        self.hist_area = Gtk.DrawingArea(content_height=90)
+        self.hist_area.set_draw_func(self.draw_hist)
+        left.append(self.hist_area)
+        self.stats = Gtk.Label(xalign=0)
+        self.stats.add_css_class("cs-status")
+        left.append(self.stats)
+        root.append(left)
+
+        # right: controls
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, width_request=400,
+                        margin_top=18, margin_bottom=18, margin_start=20, margin_end=20)
+        panel.add_css_class("panel")
+        scroll = Gtk.ScrolledWindow(child=panel, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroll.add_css_class("panel")
+        title = Gtk.Label(label="Camera Settings", xalign=0)
+        title.add_css_class("cs-title")
+        panel.append(title)
+
+        row = Gtk.Box(spacing=10, homogeneous=True)
+        self.cam_btns = {}
+        grp = None
+        for key, (_, label) in CAMERAS.items():
+            b = Gtk.ToggleButton(label=label)
+            b.add_css_class("cs-btn")
+            if grp:
+                b.set_group(grp)
+            grp = grp or b
+            b.connect("toggled", self.on_cam_toggled, key)
+            self.cam_btns[key] = b
+            row.append(b)
+        panel.append(row)
+
+        row = Gtk.Box(spacing=10, homogeneous=True)
+        self.size_dd = Gtk.DropDown.new_from_strings(["-"])
+        self.fps_dd = Gtk.DropDown.new_from_strings(["%d fps" % f for f in FPS_CHOICES])
+        self.size_dd.connect("notify::selected", self.on_format_changed)
+        self.fps_dd.connect("notify::selected", self.on_format_changed)
+        row.append(self.size_dd)
+        row.append(self.fps_dd)
+        panel.append(row)
+
+        hdr = Gtk.Box(spacing=10)
+        lab = Gtk.Label(label="IMAGE", xalign=0)
+        lab.add_css_class("cs-section")
+        self.mod_label = Gtk.Label(label="\u25cf modified (applied to the camera)", xalign=0, hexpand=True)
+        self.mod_label.add_css_class("cs-mod")
+        hdr.append(lab)
+        hdr.append(self.mod_label)
+        panel.append(hdr)
+        self.sliders = {}
+        for key, name in (("contrast", "Contrast"), ("saturation", "Saturation"), ("gamma", "Gamma")):
+            panel.append(self.make_slider(key, name, *RANGES[key], 0.01, "%.2f"))
+        reset = Gtk.Button(label="Reset image")
+        reset.add_css_class("cs-btn")
+        reset.add_css_class("cs-reset")
+        reset.connect("clicked", self.on_reset)
+        panel.append(reset)
+        self.reset_btn = reset
+        row = Gtk.Box(spacing=12)
+        l = Gtk.Label(label="Keep image settings applied after closing", xalign=0, hexpand=True, wrap=True)
+        l.add_css_class("cs-name")
+        ksw = Gtk.Switch(active=self.cfg.get("keep", False), valign=Gtk.Align.CENTER)
+        ksw.connect("notify::active", self.on_keep)
+        row.append(l)
+        row.append(ksw)
+        panel.append(row)
+
+        self.focus_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        lab = Gtk.Label(label="FOCUS (REAR LENS)", xalign=0)
+        lab.add_css_class("cs-section")
+        self.focus_box.append(lab)
+        self.focus_box.append(self.make_slider("focus", "Focus", 0, 1023, 1, "%d"))
+        row = Gtk.Box(spacing=10, homogeneous=True)
+        for label, v in (("Near", FOCUS_NEAR), ("Far", FOCUS_FAR)):
+            b = Gtk.Button(label=label)
+            b.add_css_class("cs-btn")
+            b.connect("clicked", lambda _b, v=v: self.sliders["focus"][0].set_value(v))
+            row.append(b)
+        self.focus_box.append(row)
+        panel.append(self.focus_box)
+
+        lab = Gtk.Label(label="ANALYSIS", xalign=0)
+        lab.add_css_class("cs-section")
+        panel.append(lab)
+        row = Gtk.Box(spacing=12)
+        sw = Gtk.Switch(active=self.cfg.get("zebra", True), valign=Gtk.Align.CENTER)
+        sw.connect("notify::active", self.on_zebra)
+        self.zebra_on = sw.get_active()
+        l = Gtk.Label(label="Clipping zebra  (red = blown, blue = crushed)", xalign=0, hexpand=True, wrap=True)
+        l.add_css_class("cs-name")
+        row.append(l)
+        row.append(sw)
+        panel.append(row)
+        lab = Gtk.Label(label="WHITE BALANCE", xalign=0)
+        lab.add_css_class("cs-section")
+        panel.append(lab)
+        self.wb_btn = Gtk.ToggleButton(label="Pick a grey / white area")
+        self.wb_btn.add_css_class("cs-btn")
+        self.wb_btn.connect("toggled", self.on_wb_toggled)
+        panel.append(self.wb_btn)
+        self.wb_info = Gtk.Label(xalign=0, wrap=True, selectable=False)
+        self.wb_info.add_css_class("cs-mono")
+        panel.append(self.wb_info)
+        self.wb_apply = Gtk.Button(label="Apply to camera tuning")
+        self.wb_apply.add_css_class("cs-btn")
+        self.wb_apply.set_sensitive(False)
+        self.wb_apply.connect("clicked", self.on_wb_apply)
+        panel.append(self.wb_apply)
+        self.status = Gtk.Label(xalign=0, wrap=True)
+        self.status.add_css_class("cs-status")
+        panel.append(self.status)
+
+        scroll.set_size_request(400, -1)
+        root.append(scroll)
+        self.win.set_content(root)
+        self.win.present()
+        if self.cam not in CAMERAS:
+            self.cam = "front"
+        self.refresh_modified()
+        self.cam_btns[self.cam].set_active(True)
+
+    def make_slider(self, key, name, lo, hi, step, fmt):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, name=key)
+        top = Gtk.Box()
+        n = Gtk.Label(label=name, xalign=0, hexpand=True)
+        n.add_css_class("cs-name")
+        v = Gtk.Label(label="", xalign=1)
+        v.add_css_class("cs-value")
+        top.append(n)
+        top.append(v)
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, lo, hi, step)
+        scale.set_draw_value(False)
+        scale.connect("value-changed", self.on_slider, key, fmt, v)
+        box.append(top)
+        box.append(scale)
+        self.sliders[key] = (scale, v, fmt)
+        return box
+
+    # ---- events ----
+    def on_cam_toggled(self, btn, key):
+        if not btn.get_active():
+            return
+        if key != self.cam:
+            self.restore_defaults(self.cam)
+        self.cam = key
+        self.cfg["camera"] = key
+        self.wb = self.wb_point = None
+        self.wb_info.set_label("")
+        self.wb_apply.set_sensitive(False)
+        self.loading = True
+        for k, (scale, v, fmt) in self.sliders.items():
+            scale.set_value(self.val(k))
+            v.set_label(fmt % self.val(k))
+        node = self.nodes.get(CAMERAS[key][0])
+        sizes = node["sizes"] if node else []
+        self.sizes = sizes
+        self.size_dd.set_model(Gtk.StringList.new(["%dx%d" % s for s in sizes] or ["-"]))
+        want = tuple(self.cs().get("size", (640, 480)))
+        idx = sizes.index(want) if want in sizes else (sizes.index((640, 480)) if (640, 480) in sizes else 0)
+        self.size_dd.set_selected(idx)
+        self.fps_dd.set_selected(FPS_CHOICES.index(self.cs().get("fps", 30)) if self.cs().get("fps", 30) in FPS_CHOICES else 1)
+        self.focus_box.set_visible(key == "rear" and self.lens is not None)
+        self.loading = False
+        self.refresh_modified()
+        self.start_pipeline()
+
+    def on_format_changed(self, *_):
+        if self.loading or not getattr(self, "sizes", None):
+            return
+        i = self.size_dd.get_selected()
+        if i >= len(self.sizes):
+            return
+        self.cs()["size"] = list(self.sizes[i])
+        self.cs()["fps"] = FPS_CHOICES[self.fps_dd.get_selected()]
+        save_config(self.cfg)
+        self.start_pipeline()
+
+    def on_slider(self, scale, key, fmt, label):
+        value = scale.get_value()
+        label.set_label(fmt % value)
+        if self.loading:
+            return
+        self.cs()[key] = round(value, 3)
+        self.refresh_modified()
+        old = self.pending.pop(key, 0)
+        if old:
+            GLib.source_remove(old)
+        self.pending[key] = GLib.timeout_add(90, self.flush, key)
+
+    def flush(self, key):
+        self.pending.pop(key, None)
+        if key == "focus":
+            self.apply_focus()
+        else:
+            self.apply_props()
+        save_config(self.cfg)
+        return False
+
+    def on_reset(self, _b):
+        self.cs().update(DEFAULTS)
+        self.loading = True
+        for k in DEFAULTS:
+            self.sliders[k][0].set_value(DEFAULTS[k])
+            self.sliders[k][1].set_label(self.sliders[k][2] % DEFAULTS[k])
+        self.loading = False
+        self.refresh_modified()
+        self.apply_props()
+        save_config(self.cfg)
+
+    def on_zebra(self, sw, _p):
+        self.zebra_on = sw.get_active()
+        self.cfg["zebra"] = self.zebra_on
+        save_config(self.cfg)
+        self.zebra.queue_draw()
+
+    def on_close(self, *_):
+        self.stop_pipeline()
+        self.restore_defaults(self.cam)
+        save_config(self.cfg)
+        return False
+
+    def modified(self):
+        return any(abs(self.val(k) - DEFAULTS[k]) > 0.004 for k in DEFAULTS)
+
+    def refresh_modified(self):
+        m = self.modified()
+        self.mod_label.set_visible(m)
+        (self.reset_btn.add_css_class if m else self.reset_btn.remove_css_class)("cs-go")
+
+    def on_keep(self, sw, _p):
+        self.cfg["keep"] = sw.get_active()
+        save_config(self.cfg)
+
+    def restore_defaults(self, cam):
+        """Leave the shared camera at factory image settings unless 'keep' is on."""
+        node = self.nodes.get(CAMERAS[cam][0])
+        if self.cfg.get("keep", False) or not node:
+            return
+        gam = node["gamma_prop"]
+        try:
+            pw_set(node["id"], PW_ENV_PROPS % (" %d = 2.200" % gam if gam else ""))
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    # ---- camera controls ----
+    def apply_props(self):
+        node = self.nodes.get(CAMERAS[self.cam][0])
+        if not node:
+            return
+        gam = node["gamma_prop"]
+        body = "{ contrast = %.3f saturation = %.3f%s }" % (
+            self.val("contrast"), self.val("saturation"),
+            " %d = %.3f" % (gam, self.val("gamma")) if gam else "")
+        spawn("pw-cli", "set-param", str(node["id"]), "Props", body)
+
+    def apply_focus(self):
+        if self.cam == "rear" and self.lens:
+            spawn("v4l2-ctl", "-d", self.lens, "-c", "focus_absolute=%d" % int(self.val("focus")))
+
+    # ---- white balance eyedropper ----
+    def on_wb_toggled(self, btn):
+        self.wb_mode = btn.get_active()
+        if self.wb_mode:
+            self.wb_info.set_label("Tap a neutral grey or white surface on the preview.")
+
+    def on_pick(self, _g, _n, x, y):
+        if not self.wb_mode or not self.ana.w:
+            return
+        if self.modified():
+            self.wb_info.set_label("Image settings are modified. Reset them first: the "
+                                   "measurement assumes the default tone curve.")
+            return
+        ox, oy, rw, rh = self.picture_rect(self.ov.get_width(), self.ov.get_height())
+        fx, fy = (x - ox) / rw, (y - oy) / rh
+        if not (0 <= fx < 1 and 0 <= fy < 1):
+            return
+        rgb = self.ana.patch(fx, fy)
+        gains, lin = wb_gains(rgb, self.val("gamma"))
+        after = predict_after(rgb, gains, self.val("gamma"))
+        self.wb = {"gains": gains}
+        self.wb_point = (fx, fy)
+        self.wb_info.set_label(
+            "before  R %d  G %d  B %d   (linear %.3f / %.3f / %.3f)\n"
+            "gains   R x%.3f  G x1  B x%.3f\n"
+            "after   R %d  G %d  B %d   (predicted)\n"
+            "lin = (v/255)^%.1f; CCM rows are scaled by the gains." % (
+                *rgb, *lin, gains[0], gains[2], *after, self.val("gamma")))
+        self.wb_apply.set_sensitive(True)
+        self.zebra.queue_draw()
+
+    def on_wb_apply(self, _b):
+        if not self.wb or self.restarting:
+            return
+        dlg = Adw.AlertDialog(
+            heading="Apply to camera tuning?",
+            body="This rewrites the %s tuning file (a backup is kept) and restarts the "
+                 "camera services after a 60 s warning. Brave is closed so that it can "
+                 "reconnect to the camera; its tabs are lost." % CAMERAS[self.cam][0])
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("go", "Apply and restart")
+        dlg.set_response_appearance("go", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.connect("response", lambda _d, r: self.begin_restart() if r == "go" else None)
+        dlg.present(self.win)
+
+    def begin_restart(self):
+        if not battery_ok():
+            self.status.set_label("Battery below 25 % and not charging: not restarting the cameras.")
+            return
+        self.restarting = True
+        self.countdown = 60
+        self.cancelled = False
+        self.wb_apply.set_label("Cancel (restart in 60 s)")
+        self.wb_apply.disconnect_by_func(self.on_wb_apply)
+        self.wb_apply.connect("clicked", self.cancel_restart)
+        spawn("notify-send", "-u", "critical", "-t", "60000", "Camera restart in 60 s",
+              "Camera Settings will restart the camera services and close Brave "
+              "(tabs are lost). Save your work now.")
+        GLib.timeout_add_seconds(1, self.tick_restart)
+
+    def cancel_restart(self, *_):
+        self.cancelled = True
+
+    def tick_restart(self):
+        self.countdown -= 1
+        if self.cancelled:
+            spawn("notify-send", "Camera restart cancelled")
+            self.end_restart("Cancelled.")
+            return False
+        self.wb_apply.set_label("Cancel (restart in %d s)" % self.countdown)
+        if self.countdown > 0:
+            return True
+        self.wb_apply.set_sensitive(False)
+        self.wb_apply.set_label("Restarting the cameras...")
+        self.stop_pipeline()
+        threading.Thread(target=self.do_restart, daemon=True).start()
+        return False
+
+    def end_restart(self, msg):
+        self.restarting = False
+        self.wb_apply.disconnect_by_func(self.cancel_restart)
+        self.wb_apply.connect("clicked", self.on_wb_apply)
+        self.wb_apply.set_label("Apply to camera tuning")
+        self.wb_apply.set_sensitive(False)
+        self.status.set_label(msg)
+
+    def do_restart(self):
+        msg = "Applied. Tap the grey patch again to check the result."
+        try:
+            path = os.path.join(SIMPLE_IPA, CAMERAS[self.cam][0] + ".yaml")
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            shutil.copy2(path, "%s.bak-%s" % (path, stamp))
+            with open(path) as f:
+                text = f.read()
+            with open(path, "w") as f:
+                f.write(scale_ccm_text(text, self.wb["gains"], stamp))
+            if not os.environ.get("DCS_DRY_RUN"):
+                subprocess.run(["systemctl", "--user", "restart", "camera-pipewire.service",
+                                "camera-wireplumber.service"], timeout=60)
+                time.sleep(3)
+                subprocess.run(["swaymsg", '[app_id="brave-browser"] kill'], capture_output=True)
+            for _ in range(20):          # wait for the camera nodes to come back
+                time.sleep(1)
+                try:
+                    if len(pw_nodes()) == 2:
+                        break
+                except (OSError, ValueError):
+                    pass
+        except Exception as e:  # report, never crash the UI thread
+            msg = "Failed: %s" % e
+        GLib.idle_add(self.after_restart, msg)
+
+    def after_restart(self, msg):
+        try:
+            self.nodes = pw_nodes()
+        except (OSError, ValueError):
+            pass
+        self.wb = self.wb_point = None
+        self.wb_info.set_label("")
+        self.end_restart(msg)
+        self.start_pipeline()
+        return False
+
+    # ---- pipeline ----
+    def stop_pipeline(self):
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+            self.pipeline = None
+
+    def start_pipeline(self, retried=False):
+        self.stop_pipeline()
+        if not retried:
+            self.retried = False
+        node = self.nodes.get(CAMERAS[self.cam][0])
+        if not node or not self.sizes:
+            self.status.set_label("Camera node not found. Is camera-pipewire running?")
+            return
+        w, h = self.sizes[self.size_dd.get_selected()]
+        fps = FPS_CHOICES[self.fps_dd.get_selected()]
+        busy = running_size(node["id"])
+        if busy and busy != (w, h):
+            w, h, fps = busy[0], busy[1], 0
+        self.following = bool(fps == 0)
+        desc = (
+            "pipewiresrc target-object=%d ! video/x-raw,width=%d,height=%d%s "
+            "! videoconvert ! tee name=t "
+            "t. ! queue max-size-buffers=2 leaky=downstream ! gtk4paintablesink name=vs "
+            "t. ! queue max-size-buffers=1 leaky=downstream ! videorate drop-only=true "
+            "! video/x-raw,framerate=%d/1 ! videoscale ! video/x-raw,width=%d "
+            "! videoconvert ! video/x-raw,format=RGB ! appsink name=an emit-signals=true "
+            "max-buffers=1 drop=true sync=false"
+        ) % (node["id"], w, h, ",framerate=%d/1" % fps if fps else "", ANALYSIS_FPS, GRID_W)
+        try:
+            self.pipeline = Gst.parse_launch(desc)
+        except GLib.Error as e:
+            self.status.set_label("Pipeline error: %s" % e.message)
+            return
+        self.picture.set_paintable(self.pipeline.get_by_name("vs").props.paintable)
+        self.pipeline.get_by_name("an").connect("new-sample", self.on_sample)
+        bus = self.pipeline.get_bus()
+        bus.add_signal_watch()
+        bus.connect("message", self.on_bus)
+        self.status.set_label(
+            "%s camera, %dx%d @ %d fps" % (CAMERAS[self.cam][1], w, h, fps) if fps else
+            "%s camera is in use by another app: following its %dx%d format" % (CAMERAS[self.cam][1], w, h))
+        self.pipeline.set_state(Gst.State.PLAYING)
+        # controls live on the node; (re)apply once the stream is up. The lens
+        # driver resets focus when the sensor starts streaming, so wait a bit.
+        GLib.timeout_add(700, self.after_start, self.pipeline)
+
+    def after_start(self, pipeline):
+        if pipeline is self.pipeline:
+            self.apply_props()
+            self.apply_focus()
+        return False
+
+    def on_bus(self, _bus, msg):
+        if msg.type == Gst.MessageType.ERROR:
+            err, _dbg = msg.parse_error()
+            self.status.set_label("Stream error: %s" % err.message)
+            if not self.following and not self.retried:    # lost a format race: follow the winner
+                self.retried = True
+                GLib.timeout_add(800, lambda: self.start_pipeline(retried=True) or False)
+
+    def on_sample(self, sink):
+        s = sink.emit("pull-sample")
+        if not s:
+            return Gst.FlowReturn.OK
+        w = GRID_W   # 64 px * 3 bytes is already 4-byte aligned: no row padding
+        buf = s.get_buffer()
+        ok, m = buf.map(Gst.MapFlags.READ)
+        if ok:
+            try:
+                h = len(m.data) // (w * 3)
+                if h:
+                    self.ana.update(bytes(m.data[:w * h * 3]), w, h)
+                    GLib.idle_add(self.refresh_analysis)
+            finally:
+                buf.unmap(m)
+        return Gst.FlowReturn.OK
+
+    def refresh_analysis(self):
+        a = self.ana
+        self.hist_area.queue_draw()
+        self.zebra.queue_draw()
+        self.stats.set_label("mean R %d  G %d  B %d     blown %.1f %%     crushed %.1f %%" % (
+            a.means[0], a.means[1], a.means[2], a.hi, a.lo))
+        return False
+
+    # ---- drawing ----
+    def picture_rect(self, width, height):
+        a = self.ana
+        if not a.w:
+            return 0, 0, 0, 0
+        pw = self.picture.get_paintable()
+        ratio = (pw.get_intrinsic_aspect_ratio() if pw else 0) or a.w / a.h
+        if width / height > ratio:
+            rh, rw = height, height * ratio
+        else:
+            rw, rh = width, width / ratio
+        return (width - rw) / 2, (height - rh) / 2, rw, rh
+
+    def draw_zebra(self, _area, cr, width, height):
+        a = self.ana
+        if not a.w:
+            return
+        x0, y0, rw, rh = self.picture_rect(width, height)
+        if self.wb_point:
+            cx, cy = x0 + self.wb_point[0] * rw, y0 + self.wb_point[1] * rh
+            cr.set_source_rgba(0.21, 0.94, 0.63, 1)
+            cr.set_line_width(3)
+            cr.arc(cx, cy, 0.04 * rw, 0, 2 * math.pi)
+            cr.stroke()
+        if not self.zebra_on:
+            return
+        cw, ch = rw / a.w, rh / a.h
+        for kind, rgb in ((1, (0.88, 0.32, 0.32)), (2, (0.35, 0.66, 1.0))):
+            cr.save()
+            cr.new_path()
+            any_ = False
+            for y in range(a.h):
+                x = 0
+                while x < a.w:
+                    if a.flags[y * a.w + x] == kind:
+                        s = x
+                        while x < a.w and a.flags[y * a.w + x] == kind:
+                            x += 1
+                        cr.rectangle(x0 + s * cw, y0 + y * ch, (x - s) * cw, ch)
+                        any_ = True
+                    else:
+                        x += 1
+            if any_:
+                cr.clip()
+                cr.set_source_rgba(*rgb, 0.85)
+                cr.set_line_width(3)
+                step = 14
+                for k in range(-int(rh), int(rw) + int(rh), step):
+                    cr.move_to(x0 + k, y0 + rh)
+                    cr.line_to(x0 + k + rh, y0)
+                cr.stroke()
+            cr.restore()
+
+    def draw_hist(self, _area, cr, width, height):
+        cr.set_source_rgb(0.055, 0.07, 0.086)
+        cr.paint()
+        h = self.ana.hist
+        top = max(max(h), 1)
+        bw = width / 64
+        cr.set_source_rgba(0.84, 0.87, 0.89, 0.85)
+        for i, c in enumerate(h):
+            bh = (c / top) ** 0.5 * (height - 4)   # sqrt scale keeps small tails visible
+            cr.rectangle(i * bw, height - bh, bw - 1, bh)
+        cr.fill()
+        cr.set_source_rgba(0.35, 0.94, 0.63, 0.5)   # clip markers at both ends
+        cr.rectangle(0, 0, 2, height)
+        cr.rectangle(width - 2, 0, 2, height)
+        cr.fill()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Camera Settings
+Comment=Live preview, image controls and focus for the front and rear cameras
+Exec=/home/linux/.local/bin/duet-camera-settings
+Icon=camera-photo
+Terminal=false
+Categories=AudioVideo;

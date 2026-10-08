@@ -1,0 +1,11 @@
+[Unit]
+Description=Limit Duet battery charge to 75-80 percent while on AC
+
+[Service]
+ExecStart=/usr/local/sbin/battery-limit
+ExecStopPost=/usr/local/sbin/battery-limit --normal
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

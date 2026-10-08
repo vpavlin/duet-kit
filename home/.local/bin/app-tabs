@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+# Give every app other than the three main ones its own workspace ("4:Bluetooth", ...),
+# shown as its own tab in waybar. Dialogs that sway floats stay with their parent.
+import json, re, subprocess
+
+MAIN = {"logos-basecamp", "brave-browser", "foot"}
+# prompts and pickers float over the current app instead of getting a tab
+DIALOGS = {"duet.quicksettings", "gcr-prompter", "org.gnome.keyring.SystemPrompter", "pinentry-gnome3",
+           "xdg-desktop-portal-gtk", "polkit-gnome-authentication-agent-1", "blueman-adapters"}
+NAMES = {"blueman-manager": "Bluetooth", "nm-connection-editor": "Network",
+         "org.pulseaudio.pavucontrol": "Sound", "pavucontrol": "Sound", "htop": "htop", "nmtui": "Wi-Fi", "xyz.vpavlin.DuetCameraSettings": "Camera", "thunar": "Files", "dev.tchx84.Portfolio": "Files", "org.gnome.Loupe": "Image"}
+
+def sway(*args):
+    return subprocess.run(["swaymsg", *args], capture_output=True, text=True).stdout
+
+def label(con):
+    app = con.get("app_id") or (con.get("window_properties") or {}).get("class") or "App"
+    name = NAMES.get(app) or app.split(".")[-1].replace("-", " ").title()
+    return re.sub(r"[^\w ]", "", name)[:14] or "App"
+
+def place(con):
+    taken = {w["num"] for w in json.loads(sway("-t", "get_workspaces"))}
+    num = next(n for n in range(4, 100) if n not in taken)
+    sway(f'[con_id={con["id"]}] move container to workspace "{num}:{label(con)}", workspace "{num}:{label(con)}"')
+
+proc = subprocess.Popen(["swaymsg", "-m", "-t", "subscribe", '["window"]'], stdout=subprocess.PIPE, text=True)
+for line in proc.stdout:
+    ev = json.loads(line)
+    con = ev.get("container", {})
+    if ev.get("change") != "new" or con.get("type") == "floating_con" or con.get("app_id") in MAIN:
+        continue
+    if con.get("app_id") in DIALOGS:
+        sway(f'[con_id={con["id"]}] floating enable, move position center')
+        continue
+    place(con)

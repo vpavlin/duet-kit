@@ -1,0 +1,12 @@
+[Unit]
+Description=Brave browser
+PartOf=sway-session.target
+After=sway-session.target
+
+[Service]
+ExecStart=/usr/bin/brave-browser --ozone-platform=wayland --use-gl=angle --use-angle=gles --password-store=basic --enable-features=WebRtcPipeWireCamera
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=sway-session.target

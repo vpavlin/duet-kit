@@ -1,0 +1,121 @@
+{
+  "layer": "top",
+  "position": "top",
+  "height": 40,
+  "modules-left": [
+    "custom/keyboard",
+    "sway/workspaces"
+  ],
+  "modules-right": [
+    "custom/launcher",
+    "custom/settings",
+    "custom/layout",
+    "custom/rotate",
+    "custom/screenshot",
+    "network",
+    "bluetooth",
+    "pulseaudio",
+    "battery",
+    "clock",
+    "custom/close",
+    "custom/power"
+  ],
+  "sway/workspaces": {
+    "disable-scroll": true,
+    "persistent-workspaces": {
+      "1:Basecamp": [],
+      "2:Web": [],
+      "3:Term": []
+    },
+    "format": "{name}"
+  },
+  "custom/keyboard": {
+    "format": "",
+    "tooltip": false,
+    "on-click": "pkill -RTMIN wvkbd-mobintl"
+  },
+  "custom/launcher": {
+    "format": "",
+    "tooltip": false,
+    "on-click": "fuzzel"
+  },
+  "pulseaudio": {
+    "format": "<span font=\"tabler-icons 15\" rise=\"-2pt\"></span>  {volume}%",
+    "format-muted": "<span font=\"tabler-icons 15\" rise=\"-2pt\"></span>",
+    "on-click": "pactl set-sink-mute @DEFAULT_SINK@ toggle"
+  },
+  "battery": {
+    "format": "<span font=\"tabler-icons 15\" rise=\"-2pt\">{icon}</span>  {capacity}%",
+    "format-charging": "<span font=\"tabler-icons 15\" rise=\"-2pt\"></span>  {capacity}%",
+    "format-icons": [
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "states": {
+      "warning": 20,
+      "critical": 10
+    },
+    "interval": 5
+  },
+  "clock": {
+    "format": "{:%H:%M}",
+    "tooltip-format": "{:%a %d %b %Y}"
+  },
+  "custom/power": {
+    "format": "",
+    "tooltip": false,
+    "on-click": "systemctl suspend"
+  },
+  "custom/rotate": {
+    "exec": "~/.local/bin/rotation-lock status",
+    "interval": "once",
+    "signal": 8,
+    "tooltip": false,
+    "on-click": "~/.local/bin/rotation-lock"
+  },
+  "custom/layout": {
+    "exec": "~/.local/bin/kbd-layout-label",
+    "interval": 1,
+    "tooltip": false,
+    "on-click": "swaymsg input type:keyboard xkb_switch_layout next"
+  },
+  "custom/close": {
+    "format": "",
+    "tooltip": false,
+    "on-click": "~/.local/bin/close-app"
+  },
+  "network": {
+    "format-wifi": "{icon}",
+    "format-icons": [
+      "",
+      "",
+      "",
+      ""
+    ],
+    "format-ethernet": "",
+    "format-disconnected": "",
+    "tooltip-format": "{essid} {signalStrength}%",
+    "on-click": "foot --app-id=nmtui -e nmtui"
+  },
+  "bluetooth": {
+    "format": "",
+    "format-off": "",
+    "format-disabled": "",
+    "format-connected": "",
+    "tooltip-format-connected": "{device_alias}",
+    "on-click": "blueman-manager"
+  },
+  "custom/screenshot": {
+    "format": "",
+    "tooltip": false,
+    "on-click": "~/.local/bin/screenshot"
+  },
+  "custom/settings": {
+    "format": "",
+    "tooltip": false,
+    "on-click": "~/.local/bin/quick-settings"
+  }
+}

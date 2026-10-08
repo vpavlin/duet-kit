@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Camera
+Comment=Take photos with the front or rear camera
+Exec=brave-browser --enable-features=WebRtcPipeWireCamera http://127.0.0.1:8765/camera.html
+Terminal=false
+Categories=AudioVideo;

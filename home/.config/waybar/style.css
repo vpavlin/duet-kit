@@ -1,0 +1,47 @@
+/* Shrooms palette: void #07090b, panel #0e1216, line #1c2229, bone #d6dde3, ash #6b7680,
+   phosphor #35f0a0, blossom #ff6fb5, violet #9a7bff, amber #f0b429, chartreuse #c8e64a, sky #5aa9ff, rust #e05252 */
+* { font-family: sans-serif, tabler-icons; font-size: 16px; font-weight: bold; min-height: 0; }
+window#waybar {
+  background: #07090b;
+  color: #d6dde3;
+  border-bottom: 3px solid transparent;
+  border-image: linear-gradient(to right, #35f0a0, #5aa9ff, #9a7bff, #ff6fb5, #f0b429) 1;
+}
+#workspaces { margin: 5px 6px; }
+#workspaces button {
+  padding: 0 16px; margin: 0 4px; border: none; border-radius: 999px;
+  background: transparent; box-shadow: none; text-shadow: none;
+}
+#workspaces button:hover { background: transparent; box-shadow: none; }
+#workspaces button:nth-child(1) label { color: #35f0a0; }
+#workspaces button:nth-child(2) label { color: #ff6fb5; }
+#workspaces button:nth-child(3) label { color: #c8e64a; }
+#workspaces button.focused:nth-child(1) { background: #35f0a0; }
+#workspaces button.focused:nth-child(2) { background: #ff6fb5; }
+#workspaces button.focused:nth-child(3) { background: #c8e64a; }
+#workspaces button.focused label { color: #07090b; }
+#custom-layout, #custom-rotate, #custom-keyboard, #custom-launcher, #custom-power, #custom-close, #network, #bluetooth, #pulseaudio, #battery, #clock { padding: 0 11px; }
+#custom-rotate, #custom-keyboard, #custom-launcher, #custom-power, #custom-close, #network, #bluetooth { font-family: tabler-icons; font-size: 21px; font-weight: normal; }
+#network { color: #35f0a0; }
+#network.disconnected { color: #6b7680; }
+#bluetooth { color: #9a7bff; }
+#bluetooth.off, #bluetooth.disabled { color: #6b7680; }
+#bluetooth.connected { color: #5aa9ff; }
+#custom-layout { color: #c8e64a; }
+#custom-rotate { color: #5aa9ff; }
+#custom-keyboard { color: #9a7bff; }
+#custom-launcher { color: #35f0a0; }
+#pulseaudio { color: #5aa9ff; }
+#battery { color: #f0b429; }
+#battery.charging { color: #35f0a0; }
+#battery.warning:not(.charging) { color: #e05252; }
+#clock { color: #ff6fb5; }
+#custom-power { color: #e05252; }
+#custom-close { color: #ff6fb5; padding: 0 12px; }
+#workspaces button:nth-child(n+4) label { color: #9a7bff; }
+#workspaces button.focused:nth-child(n+4) { background: #9a7bff; }
+#workspaces button.focused:nth-child(n+4) label { color: #07090b; }
+#custom-keyboard { padding-left: 16px; padding-right: 14px; font-size: 24px; }
+#custom-screenshot { font-family: tabler-icons; font-size: 21px; font-weight: normal; color: #f0b429; padding: 0 11px; }
+#custom-launcher { margin-right: 10px; }
+#custom-settings { font-family: tabler-icons; font-size: 21px; font-weight: normal; color: #c8e64a; padding: 0 11px; }

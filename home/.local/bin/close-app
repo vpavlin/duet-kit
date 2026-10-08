@@ -1,0 +1,17 @@
+#!/bin/sh
+# Close the app on screen, unless it is one of the main three; then go back.
+focused=$(swaymsg -t get_tree | python3 -c '
+import json,sys
+def walk(n):
+    if n.get("focused"): return n
+    for c in n.get("nodes",[])+n.get("floating_nodes",[]):
+        r = walk(c)
+        if r: return r
+f = walk(json.load(sys.stdin)) or {}
+print(f.get("app_id") or (f.get("window_properties") or {}).get("class") or "")')
+case "$focused" in
+  logos-basecamp|brave-browser|foot|"") exit 0 ;;
+esac
+swaymsg kill >/dev/null
+sleep 0.3
+swaymsg workspace back_and_forth >/dev/null

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Rotate DSI-1 to follow the accelerometer. Touch follows via map_to_output.
+# Sensor "normal" = Duet held landscape with the keyboard cover attached.
+# ~/.cache/rotation-lock present = rotation paused.
+LOCK="$HOME/.cache/rotation-lock"
+monitor-sensor --accel | while read -r line; do
+  case "$line" in
+    *"orientation changed: normal"*)    t=270 ;;
+    *"orientation changed: bottom-up"*) t=90 ;;
+    *"orientation changed: left-up"*)   t=180 ;;
+    *"orientation changed: right-up"*)  t=0 ;;
+    *) continue ;;
+  esac
+  [ -e "$LOCK" ] || swaymsg output DSI-1 transform "$t" >/dev/null
+done

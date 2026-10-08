@@ -1,0 +1,10 @@
+#!/bin/sh
+# Toggle the rotation lock; "status" prints the waybar glyph (Tabler rotate / lock).
+LOCK="$HOME/.cache/rotation-lock"
+if [ "$1" = status ]; then
+  [ -e "$LOCK" ] && printf '\356\253\242\n' || printf '\356\254\226\n'
+  exit 0
+fi
+mkdir -p "$(dirname "$LOCK")"
+if [ -e "$LOCK" ]; then rm "$LOCK"; else touch "$LOCK"; fi
+pkill -RTMIN+8 waybar

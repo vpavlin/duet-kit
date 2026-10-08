@@ -1,0 +1,13 @@
+[Unit]
+Description=Waybar for the Duet's sway session
+PartOf=sway-session.target
+After=sway-session.target
+
+[Service]
+ExecStart=/usr/bin/waybar
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=sway-session.target

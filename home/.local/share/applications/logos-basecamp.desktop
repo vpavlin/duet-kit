@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Logos Basecamp
+Exec="/home/linux/Apps/Basecamp.AppImage" --uri=%u
+Icon=logos-basecamp
+Terminal=false
+Categories=Utility;
+MimeType=x-scheme-handler/basecamp;

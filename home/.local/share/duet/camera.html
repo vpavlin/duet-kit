@@ -1,0 +1,86 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera</title>
+<style>
+  :root { --void:#07090b; --panel:#0e1216; --line:#1c2229; --bone:#d6dde3; --ash:#6b7680;
+          --phosphor:#35f0a0; --violet:#9a7bff; --chartreuse:#c8e64a; --blossom:#ff6fb5; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--void); color:var(--bone); font-family:sans-serif; }
+  body { display:flex; flex-direction:column; }
+  #stage { flex:1; min-height:0; position:relative; display:flex; align-items:center; justify-content:center; padding:10px 10px 0; }
+  video { max-width:100%; max-height:100%; border-radius:10px; border:2px solid var(--line); background:#000; }
+  video.mirror { transform: scaleX(-1); }
+  #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .3s; }
+  #bar { display:flex; align-items:center; justify-content:center; gap:18px; padding:12px; flex-wrap:wrap; }
+  select, label.chk { background:var(--panel); color:var(--bone); border:1px solid var(--line); border-radius:10px; padding:12px 14px; font-size:18px; }
+  select:focus { border-color:var(--phosphor); outline:none; }
+  label.chk { display:flex; gap:8px; align-items:center; }
+  input[type=checkbox] { width:22px; height:22px; accent-color: var(--phosphor); }
+  #shutter { width:88px; height:88px; border-radius:50%; border:6px solid var(--phosphor); background:var(--bone);
+             box-shadow:0 0 0 4px var(--void) inset; cursor:pointer; }
+  #shutter:active { background:var(--phosphor); transform:scale(.94); }
+  #thumb { width:96px; height:72px; object-fit:cover; border-radius:10px; border:2px solid var(--violet); background:var(--panel); }
+  #msg { text-align:center; color:var(--chartreuse); font-size:15px; padding:0 12px 12px; min-height:1.4em; white-space:pre-wrap; }
+</style>
+<div id="stage"><video id="v" autoplay playsinline muted></video><div id="flash"></div></div>
+<div id="bar">
+  <select id="cam" title="camera"></select>
+  <label class="chk"><input id="mirror" type="checkbox"> mirror preview</label>
+  <button id="shutter" title="take photo (Space / Enter)" aria-label="take photo"></button>
+  <img id="thumb" alt="last photo">
+</div>
+<div id="msg">Starting camera…</div>
+<script>
+const $ = id => document.getElementById(id);
+const msg = t => { $('msg').textContent = t; };
+let stream = null;
+
+async function listCams() {
+  let perm;
+  try { perm = await navigator.mediaDevices.getUserMedia({ video: true }); }   // keep it open while listing (file:// pages give empty ids otherwise)
+  catch (e) { msg('No camera access: ' + e.name + '. Check that Brave may use the camera and that the camera services are running.'); return false; }
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  $('cam').innerHTML = devs.map((d, i) => `<option value="${d.deviceId}">${d.label || 'camera ' + (i + 1)}</option>`).join('');
+  perm.getTracks().forEach(t => t.stop());
+  return devs.length > 0;
+}
+
+async function start() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  const video = { width: { ideal: 1600 }, height: { ideal: 1200 } };
+  if ($('cam').value) video.deviceId = { ideal: $('cam').value };
+  try { stream = await navigator.mediaDevices.getUserMedia({ video }); }
+  catch (e) { msg('Camera failed: ' + e.name + (e.constraint ? ' (' + e.constraint + ')' : '')); return; }
+  const v = $('v'); v.srcObject = stream; await v.play().catch(() => {});
+  const label = stream.getVideoTracks()[0].label || '';
+  $('mirror').checked = /ov02a10/.test(label);          // front camera: selfie-style preview by default
+  v.classList.toggle('mirror', $('mirror').checked);
+  msg(`${label}  ${v.videoWidth}×${v.videoHeight}   —   tap the green button to take a photo`);
+}
+
+function stamp() {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `photo-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`;
+}
+
+function shoot() {
+  const v = $('v');
+  if (!v.videoWidth) { msg('Camera is not ready yet.'); return; }
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);              // the saved photo is never mirrored
+  c.toBlob(blob => {
+    const name = stamp(), url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    $('thumb').src = url;
+    $('flash').style.opacity = .85; setTimeout(() => $('flash').style.opacity = 0, 120);
+    msg(`Saved ${name}  (${c.width}×${c.height}, ${(blob.size / 1024).toFixed(0)} KB) in your Downloads folder`);
+  }, 'image/jpeg', 0.92);
+}
+
+$('shutter').onclick = shoot;
+$('cam').onchange = start;
+$('mirror').onchange = () => $('v').classList.toggle('mirror', $('mirror').checked);
+document.addEventListener('keydown', e => { if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); shoot(); } });
+(async () => { if (await listCams()) start(); })();
+</script>

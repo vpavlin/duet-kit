@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+# Quick settings for the Duet: brightness, display scale, volume, mic and battery charge limit sliders.
+# Tapping the bar button again closes it. Brightness and volume apply while
+# dragging; scale applies shortly after the finger stops (re-scaling under a
+# moving finger makes the slider jump) and is saved to the sway config.
+import os, re, subprocess, sys
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk
+
+BACKLIGHT = "/sys/class/backlight/backlight_lcd0"
+SWAY_CONFIG = os.path.expanduser("~/.config/sway/config")
+CHARGE_CONF = "/etc/default/battery-limit"  # read by battery-limit.service; owned by linux so no sudo is needed
+OUTPUT = "DSI-1"
+ICON = {"sun": "", "scale": "", "volume": "", "mic": "", "battery": ""}
+
+CSS = """
+window { background: #0e1216; }
+.qs-title { color: #d6dde3; font-weight: bold; font-size: 15pt; }
+.qs-icon { font-family: tabler-icons; font-size: 20pt; min-width: 36px; }
+.qs-name { color: #d6dde3; font-weight: bold; }
+.qs-value { color: #6b7680; font-family: monospace; min-width: 64px; }
+scale trough { background: #1c2229; min-height: 8px; border-radius: 99px; }
+scale slider { background: #d6dde3; min-width: 26px; min-height: 26px; border-radius: 99px; }
+#brightness .qs-icon, #brightness .qs-value { color: #f0b429; }
+#brightness scale highlight { background: #f0b429; }
+#scale .qs-icon, #scale .qs-value { color: #9a7bff; }
+#scale scale highlight { background: #9a7bff; }
+#volume .qs-icon, #volume .qs-value { color: #5aa9ff; }
+#volume scale highlight { background: #5aa9ff; }
+#mic .qs-icon, #mic .qs-value { color: #ff6fb5; }
+#charge .qs-icon, #charge .qs-value { color: #35f0a0; }
+#charge scale highlight { background: #35f0a0; }
+#mic scale highlight { background: #ff6fb5; }
+.qs-done { background: #35f0a0; color: #07090b; font-weight: bold; border-radius: 99px; padding: 6px 28px; }
+"""
+
+
+def run(*cmd):
+    return subprocess.run(cmd, capture_output=True, text=True).stdout
+
+
+def read_int(path):
+    with open(path) as f:
+        return int(f.read().strip())
+
+
+def current_scale():
+    out = run("swaymsg", "-t", "get_outputs", "-r")
+    m = re.search(r'"name":\s*"%s".*?"scale":\s*([0-9.]+)' % OUTPUT, out, re.S)
+    return float(m.group(1)) if m else 1.25
+
+
+def current_volume():
+    m = re.search(r"(\d+)%", run("pactl", "get-sink-volume", "@DEFAULT_SINK@"))
+    return int(m.group(1)) if m else 50
+
+
+def current_mic():
+    m = re.search(r"(\d+)%", run("pactl", "get-source-volume", "@DEFAULT_SOURCE@"))
+    return int(m.group(1)) if m else 100
+
+
+def current_charge_limit():
+    try:
+        for line in open(CHARGE_CONF):
+            k, _, v = line.strip().partition("=")
+            if k == "UPPER":
+                return max(50, min(100, int(v)))
+    except (OSError, ValueError):
+        pass
+    return 80
+
+
+def save_charge_limit(upper):
+    # charge again 5 points below the limit; 100 = no limit
+    with open(CHARGE_CONF, "w") as f:
+        f.write("UPPER=%d\nLOWER=%d\n" % (upper, max(0, upper - 5)))
+
+
+def save_scale(scale):
+    with open(SWAY_CONFIG) as f:
+        text = f.read()
+    text = re.sub(r"^(output %s .*?scale )[0-9.]+" % OUTPUT, r"\g<1>%g" % scale, text, flags=re.M)
+    with open(SWAY_CONFIG, "w") as f:
+        f.write(text)
+
+
+class QuickSettings(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="duet.quicksettings")
+        self.win = None
+        self.scale_timer = 0
+
+    def do_activate(self):
+        if self.win:  # second tap on the bar button closes the panel
+            self.win.close()
+            return
+        provider = Gtk.CssProvider()
+        provider.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+
+        self.win = Adw.ApplicationWindow(application=self, title="Quick settings")
+        self.win.set_default_size(560, -1)
+        self.win.set_resizable(False)  # floating: shrink to the content
+        self.win.connect("close-request", lambda *_: self.quit() or False)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=22, margin_bottom=22, margin_start=26, margin_end=26)
+        title = Gtk.Label(label="Quick settings", xalign=0)
+        title.add_css_class("qs-title")
+        box.append(title)
+
+        max_b = read_int(f"{BACKLIGHT}/max_brightness")
+        bright = round(100 * read_int(f"{BACKLIGHT}/brightness") / max_b)
+        box.append(self.row("brightness", ICON["sun"], "Brightness", 2, 100, 1, bright,
+                            lambda v: "%d %%" % v, self.set_brightness))
+        box.append(self.row("scale", ICON["scale"], "Scale", 1.0, 2.0, 0.05, current_scale(),
+                            lambda v: "%.2f×" % v, self.schedule_scale))
+        box.append(self.row("volume", ICON["volume"], "Volume", 0, 100, 1, current_volume(),
+                            lambda v: "%d %%" % v, self.set_volume))
+        # the built-in mic is quiet: 300 % is the tested level, so allow a boost up to 400 %
+        box.append(self.row("mic", ICON["mic"], "Microphone", 0, 400, 5, current_mic(),
+                            lambda v: "%d %%" % v, self.set_mic))
+
+        box.append(self.row("charge", ICON["battery"], "Charge limit", 50, 100, 5, current_charge_limit(),
+                            lambda v: "off" if v >= 100 else "%d %%" % v, self.schedule_charge))
+
+        done = Gtk.Button(label="Done", halign=Gtk.Align.END)
+        done.add_css_class("qs-done")
+        done.connect("clicked", lambda *_: self.win.close())
+        box.append(done)
+
+        self.win.set_content(box)
+        self.win.present()
+
+    def row(self, name, icon, label, lo, hi, step, value, fmt, on_change):
+        grid = Gtk.Grid(column_spacing=12, row_spacing=4, name=name)
+        ic = Gtk.Label(label=icon)
+        ic.add_css_class("qs-icon")
+        nm = Gtk.Label(label=label, xalign=0, hexpand=True)
+        nm.add_css_class("qs-name")
+        val = Gtk.Label(label=fmt(value), xalign=1)
+        val.add_css_class("qs-value")
+        sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, lo, hi, step)
+        sc.set_draw_value(False)
+        sc.set_hexpand(True)
+        sc.set_value(value)
+
+        def changed(s):
+            v = round(s.get_value() / step) * step
+            val.set_label(fmt(v))
+            on_change(v)
+        sc.connect("value-changed", changed)
+        grid.attach(ic, 0, 0, 1, 2)
+        grid.attach(nm, 1, 0, 1, 1)
+        grid.attach(val, 2, 0, 1, 1)
+        grid.attach(sc, 1, 1, 2, 1)
+        return grid
+
+    def set_brightness(self, pct):
+        max_b = read_int(f"{BACKLIGHT}/max_brightness")
+        with open(f"{BACKLIGHT}/brightness", "w") as f:
+            f.write(str(max(1, round(max_b * pct / 100))))
+
+    def set_volume(self, pct):
+        subprocess.Popen(["pactl", "set-sink-volume", "@DEFAULT_SINK@", "%d%%" % pct])
+
+    def set_mic(self, pct):
+        subprocess.Popen(["pactl", "set-source-volume", "@DEFAULT_SOURCE@", "%d%%" % pct])
+
+    def schedule_scale(self, scale):
+        if self.scale_timer:
+            GLib.source_remove(self.scale_timer)
+        self.scale_timer = GLib.timeout_add(700, self.apply_scale, scale)
+
+    def schedule_charge(self, upper):
+        if getattr(self, "charge_timer", 0):
+            GLib.source_remove(self.charge_timer)
+        self.charge_timer = GLib.timeout_add(500, self.apply_charge, int(upper))
+
+    def apply_charge(self, upper):
+        self.charge_timer = 0
+        try:
+            save_charge_limit(upper)
+        except OSError:
+            pass
+        return False
+
+    def apply_scale(self, scale):
+        self.scale_timer = 0
+        run("swaymsg", "output %s scale %g" % (OUTPUT, scale))
+        save_scale(scale)
+        return False
+
+
+if __name__ == "__main__":
+    sys.exit(QuickSettings().run(None))
