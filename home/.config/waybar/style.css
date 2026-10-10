@@ -20,7 +20,7 @@ window#waybar {
 #workspaces button.focused:nth-child(2) { background: #ff6fb5; }
 #workspaces button.focused:nth-child(3) { background: #c8e64a; }
 #workspaces button.focused label { color: #07090b; }
-#custom-layout, #custom-rotate, #custom-keyboard, #custom-launcher, #custom-power, #custom-close, #network, #bluetooth, #pulseaudio, #battery, #clock { padding: 0 11px; }
+#custom-display, #custom-layout, #custom-display, #custom-rotate, #custom-keyboard, #custom-launcher, #custom-power, #custom-close, #network, #bluetooth, #pulseaudio, #battery, #clock { padding: 0 11px; }
 #custom-rotate, #custom-keyboard, #custom-launcher, #custom-power, #custom-close, #network, #bluetooth { font-family: tabler-icons; font-size: 21px; font-weight: normal; }
 #network { color: #35f0a0; }
 #network.disconnected { color: #6b7680; }
@@ -45,3 +45,7 @@ window#waybar {
 #custom-screenshot { font-family: tabler-icons; font-size: 21px; font-weight: normal; color: #f0b429; padding: 0 11px; }
 #custom-launcher { margin-right: 10px; }
 #custom-settings { font-family: tabler-icons; font-size: 21px; font-weight: normal; color: #c8e64a; padding: 0 11px; }
+
+#custom-display.off { color: #6b7680; }
+#custom-display.on { color: #35f0a0; }
+#custom-display.none { padding: 0; min-width: 0; }

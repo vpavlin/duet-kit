@@ -12,6 +12,7 @@
     "custom/layout",
     "custom/rotate",
     "custom/screenshot",
+    "custom/display",
     "network",
     "bluetooth",
     "pulseaudio",
@@ -112,6 +113,13 @@
     "format": "",
     "tooltip": false,
     "on-click": "~/.local/bin/screenshot"
+  },
+  "custom/display": {
+    "exec": "~/.local/bin/display-icon",
+    "return-type": "json",
+    "interval": 2,
+    "tooltip": false,
+    "on-click": "~/.local/bin/display-settings"
   },
   "custom/settings": {
     "format": "",

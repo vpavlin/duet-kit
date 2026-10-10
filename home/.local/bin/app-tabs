@@ -5,7 +5,7 @@ import json, re, subprocess
 
 MAIN = {"logos-basecamp", "brave-browser", "foot"}
 # prompts and pickers float over the current app instead of getting a tab
-DIALOGS = {"duet.quicksettings", "duet.wifi", "gcr-prompter", "org.gnome.keyring.SystemPrompter", "pinentry-gnome3",
+DIALOGS = {"duet.quicksettings", "duet.wifi", "duet.display", "at.yrlf.wl_mirror", "gcr-prompter", "org.gnome.keyring.SystemPrompter", "pinentry-gnome3",
            "xdg-desktop-portal-gtk", "polkit-gnome-authentication-agent-1", "blueman-adapters"}
 NAMES = {"blueman-manager": "Bluetooth", "nm-connection-editor": "Network",
          "org.pulseaudio.pavucontrol": "Sound", "pavucontrol": "Sound", "htop": "htop", "nmtui": "Wi-Fi", "xyz.vpavlin.DuetCameraSettings": "Camera", "thunar": "Files", "dev.tchx84.Portfolio": "Files", "org.gnome.Loupe": "Image"}

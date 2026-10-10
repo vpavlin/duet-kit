@@ -134,3 +134,10 @@ visible networks (connected one outlined, saved ones with a forget button), tap 
 Scanning takes ~6-7 s on this radio (the cache is empty while it scans), so the app triggers `nmcli dev wifi rescan`, waits, then lists. Uses nmcli only.
 Both popup panels (`duet.wifi`, `duet.quicksettings`) share the same behaviour: sway rule `for_window [app_id="duet\\.(wifi|quicksettings)"] floating enable, move position center`,
 fixed size (Wi-Fi 560x480 so it still fits above the on-screen keyboard), they close when focus leaves them, and opening one kills the other (`one_panel()` in both scripts).
+
+## 13. External screen / projector (added 2026-10-10)
+USB-C hub with HDMI shows up as sway output `DP-1` (works out of the box on 6.12; this hub only gives 1080p at 30 Hz, 720p at 60 Hz).
+Only mirroring makes sense on a touch tablet where windows can't be dragged to the other screen: `display-mirror on|off|status|mode` runs `wl-mirror` (apt: wl-mirror)
+fullscreen on the external output via a transient user unit `display-mirror.service`; sway rule `no_focus` for app_id `at.yrlf.wl_mirror`, and app-tabs ignores it.
+`display-settings` is the GTK panel (switch + quality 1080p30 / 720p60, app id `duet.display`, floated/centred like the other panels); waybar `custom/display`
+(`display-icon`, polls every 2 s) shows the icon only while an external screen is connected, green while mirroring. Unplugging stops the mirror automatically (the output disappears).

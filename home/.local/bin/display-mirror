@@ -1,0 +1,22 @@
+#!/bin/sh
+# Mirror the tablet screen (DSI-1) onto an external output (HDMI/DP) with wl-mirror.
+#   display-mirror on [WxH@HZ]  |  off  |  status  |  mode WxH@HZ
+# Used by display-settings and the waybar icon; sway rules put the mirror window on the external output.
+INT=DSI-1
+ext() { swaymsg -t get_outputs -r | python3 -I -c 'import json,sys
+for o in json.load(sys.stdin):
+    if o["name"]!="'$INT'": print(o["name"]); break'; }
+case "$1" in
+  on)
+    EXT=$(ext); [ -n "$EXT" ] || { echo "no external display"; exit 1; }
+    [ -n "$2" ] && swaymsg "output $EXT mode $2" >/dev/null
+    systemctl --user stop display-mirror.service 2>/dev/null
+    systemd-run --user --quiet --unit=display-mirror --collect \
+      wl-mirror --fullscreen-output "$EXT" --scaling fit --no-show-cursor "$INT" ;;
+  off) systemctl --user stop display-mirror.service 2>/dev/null; true ;;
+  mode) EXT=$(ext); [ -n "$EXT" ] && swaymsg "output $EXT mode $2" >/dev/null ;;
+  status)
+    EXT=$(ext)
+    M=$(systemctl --user is-active display-mirror.service 2>/dev/null)
+    echo "ext=${EXT:-none} mirror=$([ "$M" = active ] && echo on || echo off)" ;;
+esac

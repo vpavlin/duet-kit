@@ -1,0 +1,8 @@
+#!/bin/sh
+# waybar custom module: shows only while an external screen is connected; class "on" while mirroring.
+s=$(~/.local/bin/display-mirror status)
+case "$s" in
+  *ext=none*) echo '{"text":"","class":"none"}' ;;
+  *mirror=on*) echo '{"text":"","class":"on","tooltip":"mirroring"}' ;;
+  *) echo '{"text":"","class":"off","tooltip":"external screen"}' ;;
+esac

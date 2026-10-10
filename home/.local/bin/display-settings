@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+# Display panel: mirror the tablet onto the plugged-in HDMI screen / projector, pick its quality.
+# Same look as quick-settings / wifi-settings. Tapping the bar icon again, or clicking away, closes it.
+import re, subprocess, sys
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk
+
+MIRROR = "/home/linux/.local/bin/display-mirror"
+CSS = """
+window { background: #0e1216; }
+.d-title { color: #d6dde3; font-weight: bold; font-size: 15pt; }
+.d-icon { font-family: tabler-icons; font-size: 20pt; min-width: 36px; color: #35f0a0; }
+.d-name { color: #d6dde3; font-weight: bold; }
+.d-sub { color: #6b7680; font-family: monospace; font-size: 9pt; }
+.d-status { color: #f0b429; font-family: monospace; font-size: 10pt; }
+.d-opt { background: #141a20; color: #d6dde3; border: 1px solid #1c2229; border-radius: 12px; padding: 10px 14px; min-height: 44px; }
+.d-opt.sel { border-color: #35f0a0; color: #35f0a0; }
+.d-go { background: #35f0a0; color: #07090b; font-weight: bold; border-radius: 99px; padding: 6px 28px; }
+switch { background: #1c2229; }
+switch:checked { background: #35f0a0; }
+switch slider { background: #d6dde3; }
+"""
+
+
+def sh(*cmd):
+    return subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+
+
+def status():
+    d = dict(p.split("=") for p in sh(MIRROR, "status").split())
+    return d["ext"], d["mirror"] == "on"
+
+
+def ext_modes(ext):
+    import json
+    for o in json.loads(sh("swaymsg", "-t", "get_outputs", "-r")):
+        if o["name"] == ext:
+            cur = o["current_mode"]
+            have = {(m["width"], m["height"], round(m["refresh"] / 1000)) for m in o["modes"]}
+            return have, (cur["width"], cur["height"], round(cur["refresh"] / 1000))
+    return set(), None
+
+
+def close_on_blur(win, other_app_id):
+    subprocess.run(["swaymsg", '[app_id="%s"] kill' % other_app_id], capture_output=True)
+    seen = {"a": False}
+
+    def changed(w, _):
+        if w.is_active():
+            seen["a"] = True
+        elif seen["a"]:
+            w.close()
+    win.connect("notify::is-active", changed)
+
+
+class Display(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="duet.display")
+        self.win = None
+
+    def do_activate(self):
+        if self.win:
+            self.win.close()
+            return
+        p = Gtk.CssProvider()
+        p.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        self.win = Adw.ApplicationWindow(application=self, title="Display")
+        self.win.set_default_size(560, -1)
+        self.win.set_resizable(False)
+        self.win.connect("close-request", lambda *_: self.quit() or False)
+        close_on_blur(self.win, "duet.wifi")
+        subprocess.run(["swaymsg", '[app_id="duet.quicksettings"] kill'], capture_output=True)
+
+        self.ext, self.on = status()
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14,
+                           margin_top=22, margin_bottom=22, margin_start=26, margin_end=26)
+        self.build()
+        self.win.set_content(self.box)
+        self.win.present()
+
+    def build(self):
+        b = self.box
+        while (c := b.get_first_child()):
+            b.remove(c)
+        t = Gtk.Label(label="Display", xalign=0)
+        t.add_css_class("d-title")
+        b.append(t)
+        if self.ext == "none":
+            n = Gtk.Label(label="No external screen connected.\\nPlug in the HDMI hub.".replace("\\n", "\n"), xalign=0)
+            n.add_css_class("d-sub")
+            b.append(n)
+        else:
+            row = Gtk.Box(spacing=12)
+            ic = Gtk.Label(label="")
+            ic.add_css_class("d-icon")
+            names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+            nm = Gtk.Label(label="Mirror to %s" % self.ext_label(), xalign=0)
+            nm.add_css_class("d-name")
+            sub = Gtk.Label(label="shows this screen on the projector", xalign=0)
+            sub.add_css_class("d-sub")
+            names.append(nm)
+            names.append(sub)
+            self.sw = Gtk.Switch(active=self.on, valign=Gtk.Align.CENTER)
+            self.sw.connect("notify::active", self.toggle)
+            row.append(ic)
+            row.append(names)
+            row.append(self.sw)
+            b.append(row)
+            have, cur = ext_modes(self.ext)
+            q = Gtk.Label(label="QUALITY", xalign=0)
+            q.add_css_class("d-sub")
+            b.append(q)
+            opts = Gtk.Box(spacing=10, homogeneous=True)
+            for label, mode, key in (("1080p  30 Hz\nsharp, for slides", "1920x1080@30Hz", (1920, 1080, 30)),
+                                     ("720p  60 Hz\nsmooth, for video", "1280x720@60Hz", (1280, 720, 60))):
+                if key not in have:
+                    continue
+                btn = Gtk.Button(label=label)
+                btn.add_css_class("d-opt")
+                if cur == key:
+                    btn.add_css_class("sel")
+                btn.connect("clicked", lambda _b, m=mode: self.set_mode(m))
+                opts.append(btn)
+            b.append(opts)
+        self.msg = Gtk.Label(label=" ", xalign=0)
+        self.msg.add_css_class("d-status")
+        b.append(self.msg)
+        done = Gtk.Button(label="Done", halign=Gtk.Align.END)
+        done.add_css_class("d-go")
+        done.connect("clicked", lambda *_: self.win.close())
+        b.append(done)
+
+    def ext_label(self):
+        out = sh("swaymsg", "-t", "get_outputs", "-r")
+        m = re.search(r'"name":\s*"%s".*?"model":\s*"([^"]+)"' % re.escape(self.ext), out, re.S)
+        return (m.group(1).title() if m and m.group(1) != "Unknown" else self.ext)
+
+    def toggle(self, sw, _):
+        subprocess.Popen([MIRROR, "on" if sw.get_active() else "off"])
+        self.msg.set_label("Mirroring..." if sw.get_active() else "Mirror off")
+
+    def set_mode(self, mode):
+        subprocess.run([MIRROR, "mode", mode])
+        self.ext, self.on = status()
+        if self.on:                       # restart so the mirror re-fits the new size
+            subprocess.run([MIRROR, "on"])
+        self.build()
+        self.msg.set_label("Set to %s" % mode.replace("Hz", " Hz"))
+
+
+if __name__ == "__main__":
+    sys.exit(Display().run(None))
