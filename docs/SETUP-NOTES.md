@@ -141,3 +141,6 @@ Only mirroring makes sense on a touch tablet where windows can't be dragged to t
 fullscreen on the external output via a transient user unit `display-mirror.service`; sway rule `no_focus` for app_id `at.yrlf.wl_mirror`, and app-tabs ignores it.
 `display-settings` is the GTK panel (switch + quality 1080p30 / 720p60, app id `duet.display`, floated/centred like the other panels); waybar `custom/display`
 (`display-icon`, polls every 2 s) shows the icon only while an external screen is connected, green while mirroring. Unplugging stops the mirror automatically (the output disappears).
+
+## 14. Touchscreen gestures (3-finger swipe = switch workspace)
+`sudo apt install lisgd`, add `linux` to group `input` (`usermod -aG input linux`), enable the user service `touch-gestures` (runs `~/.local/bin/touch-gestures`: lisgd on the 27C6:0E30 touchscreen, 3 fingers L->R = previous workspace, R->L = next, wraps). Sway's own bindgesture is touchpad-only (the keyboard's Hammer pad), so it cannot do this.

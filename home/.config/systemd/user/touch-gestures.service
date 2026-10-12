@@ -1,0 +1,7 @@
+[Unit]
+Description=Touchscreen gestures (lisgd)
+[Service]
+ExecStart=%h/.local/bin/touch-gestures
+Restart=on-failure
+[Install]
+WantedBy=default.target
