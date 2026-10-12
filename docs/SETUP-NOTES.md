@@ -142,5 +142,5 @@ fullscreen on the external output via a transient user unit `display-mirror.serv
 `display-settings` is the GTK panel (switch + quality 1080p30 / 720p60, app id `duet.display`, floated/centred like the other panels); waybar `custom/display`
 (`display-icon`, polls every 2 s) shows the icon only while an external screen is connected, green while mirroring. Unplugging stops the mirror automatically (the output disappears).
 
-## 14. Touchscreen gestures (3-finger swipe = switch workspace)
-`sudo apt install lisgd`, add `linux` to group `input` (`usermod -aG input linux`), enable the user service `touch-gestures` (runs `~/.local/bin/touch-gestures`: lisgd on the 27C6:0E30 touchscreen, 3 fingers L->R = previous workspace, R->L = next, wraps). Sway's own bindgesture is touchpad-only (the keyboard's Hammer pad), so it cannot do this.
+## 14. Touchpad gestures (3-finger swipe = switch workspace)
+Sway's built-in `bindgesture` (touchpad only, i.e. the keyboard's Hammer pad) in `~/.config/sway/config`: 3 fingers left = next workspace, right = previous (wraps). Touchscreen gestures would need `lisgd` instead; not used.

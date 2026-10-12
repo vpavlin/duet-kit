@@ -79,3 +79,7 @@ client.unfocused #1c2229 #07090b #6b7680 #1c2229 #1c2229
 # projector mirror (wl-mirror): full screen on the external output, never takes keyboard focus
 for_window [app_id="at.yrlf.wl_mirror"] no_focus, border none
 no_focus [app_id="at.yrlf.wl_mirror"]
+
+# touchpad: 3-finger swipe switches workspace
+bindgesture swipe:3:right workspace prev_on_output
+bindgesture swipe:3:left workspace next_on_output

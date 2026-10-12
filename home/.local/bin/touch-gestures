@@ -1,5 +1,0 @@
-#!/bin/sh
-# 3-finger swipe on the touchscreen switches workspace (lisgd; needs the input group).
-export SWAYSOCK=${SWAYSOCK:-$(ls /run/user/$(id -u)/sway-ipc.*.sock | head -1)}
-DEV=$(for f in /sys/class/input/event*/device/name; do grep -q "27C6:0E30$" "$f" && basename "$(dirname "$(dirname "$f")")"; done | head -1)
-exec sg input -c "lisgd -d /dev/input/$DEV -g '3,LR,*,*,R,swaymsg workspace prev_on_output' -g '3,RL,*,*,R,swaymsg workspace next_on_output'"
