@@ -13,7 +13,7 @@ BACKLIGHT = "/sys/class/backlight/backlight_lcd0"
 SWAY_CONFIG = os.path.expanduser("~/.config/sway/config")
 CHARGE_CONF = "/etc/default/battery-limit"  # read by battery-limit.service; owned by linux so no sudo is needed
 OUTPUT = "DSI-1"
-ICON = {"sun": "", "scale": "", "volume": "", "mic": "", "battery": ""}
+ICON = {"sun": "", "scale": "", "volume": "", "mic": "", "battery": "", "share": ""}
 
 CSS = """
 window { background: #0e1216; }
@@ -33,6 +33,11 @@ scale slider { background: #d6dde3; min-width: 26px; min-height: 26px; border-ra
 #charge .qs-icon, #charge .qs-value { color: #35f0a0; }
 #charge scale highlight { background: #35f0a0; }
 #mic scale highlight { background: #ff6fb5; }
+#share .qs-icon { color: #5aa9ff; }
+#share .qs-sub { color: #6b7680; font-family: monospace; font-size: 9pt; }
+#share switch { background: #1c2229; }
+#share switch:checked { background: #35f0a0; }
+#share switch slider { background: #d6dde3; }
 .qs-done { background: #35f0a0; color: #07090b; font-weight: bold; border-radius: 99px; padding: 6px 28px; }
 """
 
@@ -142,6 +147,8 @@ class QuickSettings(Adw.Application):
         box.append(self.row("charge", ICON["battery"], "Charge limit", 50, 100, 5, current_charge_limit(),
                             lambda v: "off" if v >= 100 else "%d %%" % v, self.schedule_charge))
 
+        box.append(self.share_row())
+
         done = Gtk.Button(label="Done", halign=Gtk.Align.END)
         done.add_css_class("qs-done")
         done.connect("clicked", lambda *_: self.win.close())
@@ -149,6 +156,25 @@ class QuickSettings(Adw.Application):
 
         self.win.set_content(box)
         self.win.present()
+
+    def share_row(self):
+        """Switch for the VNC screen share (screen-share.service); the mesh is the authentication."""
+        grid = Gtk.Grid(column_spacing=12, row_spacing=2, name="share")
+        ic = Gtk.Label(label=ICON["share"])
+        ic.add_css_class("qs-icon")
+        nm = Gtk.Label(label="Share screen", xalign=0, hexpand=True)
+        nm.add_css_class("qs-name")
+        sub = Gtk.Label(label="vnc.duet.office.mesh", xalign=0)
+        sub.add_css_class("qs-sub")
+        sw = Gtk.Switch(valign=Gtk.Align.CENTER)
+        sw.set_active(run("systemctl", "--user", "is-active", "screen-share").strip() == "active")
+        sw.connect("notify::active", lambda w, _: subprocess.run(
+            ["systemctl", "--user", "start" if w.get_active() else "stop", "screen-share"], capture_output=True))
+        grid.attach(ic, 0, 0, 1, 2)
+        grid.attach(nm, 1, 0, 1, 1)
+        grid.attach(sub, 1, 1, 1, 1)
+        grid.attach(sw, 2, 0, 1, 2)
+        return grid
 
     def row(self, name, icon, label, lo, hi, step, value, fmt, on_change):
         grid = Gtk.Grid(column_spacing=12, row_spacing=4, name=name)
