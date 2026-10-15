@@ -156,3 +156,6 @@ Sway's built-in `bindgesture` (touchpad only, i.e. the keyboard's Hammer pad) in
 
 ## 17. Bluetooth panel
 `~/.local/bin/bluetooth-settings` (GTK4/Adw, app id `duet.bluetooth`, same look as the Wi-Fi panel): power switch, scan (refresh), tap = pair/trust/connect or disconnect, trash = forget. The bar Bluetooth icon opens it (was blueman-manager). Sway float rule, app-tabs DIALOGS and the one-panel-at-a-time logic (comma-separated list in `one_panel`) include it. After adding a new dialog app id, restart app-tabs (it keeps the list in memory).
+
+## 18. Screen sharing in the browser (Jitsi etc.)
+xdg-desktop-portal-wlr is unmasked and preferred for ScreenCast (`~/.config/xdg-desktop-portal/sway-portals.conf`), configured without a chooser to share DSI-1 (`~/.config/xdg-desktop-portal-wlr/config`). Brave runs with `--enable-features=WebRtcPipeWireCamera,WebRTCPipeWireCapturer` (needs a Brave restart). Needs the camera-only PipeWire service running.
