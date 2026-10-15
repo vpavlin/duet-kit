@@ -1,0 +1,8 @@
+[Unit]
+Description=Stream the Duet screen as low-latency MPEG-TS (wf-recorder), one viewer at a time
+[Service]
+Environment=WAYLAND_DISPLAY=wayland-1
+# 1280 wide, ultrafast x264; one TCP client plays it with: mpv --profile=low-latency tcp://stream.duet.office.mesh:5901
+ExecStart=/usr/bin/wf-recorder -o DSI-1 -c libx264 -p preset=ultrafast -p tune=zerolatency -r 20 -F transpose=1,scale=1280:-2 -m mpegts -f tcp://127.0.0.1:5901?listen=1
+Restart=always
+RestartSec=1
