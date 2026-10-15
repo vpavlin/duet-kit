@@ -144,3 +144,6 @@ fullscreen on the external output via a transient user unit `display-mirror.serv
 
 ## 14. Touchpad gestures (3-finger swipe = switch workspace)
 Sway's built-in `bindgesture` (touchpad only, i.e. the keyboard's Hammer pad) in `~/.config/sway/config`: 3 fingers left = next workspace, right = previous (wraps). Touchscreen gestures would need `lisgd` instead; not used.
+
+## 15. Share the Duet screen to a laptop window (wayvnc)
+`sudo apt install wayvnc`; unit `screen-share.service` (not enabled, start on demand: `systemctl --user start|stop screen-share`) runs `wayvnc -o DSI-1` on port 5900 with auth. Secrets are NOT in the repo: create `~/.config/wayvnc/config` (`address=0.0.0.0`, `port=5900`, `enable_auth=true`, `username=duet`, `password=...`, `rsa_private_key_file=~/.config/wayvnc/rsa_key.pem`; key via `openssl genrsa -traditional -out rsa_key.pem 3072` - wayvnc rejects the default PKCS#8 format), chmod 600. Laptop: any VNC viewer (TigerVNC `vncviewer duet:5900`), then share/capture that window.
