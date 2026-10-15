@@ -42,7 +42,8 @@ def swaymsg(cmd):
 
 def one_panel(win, other_app_id):
     """Only one popup panel at a time, and it goes away when you click elsewhere."""
-    swaymsg('[app_id="%s"] kill' % other_app_id)
+    for other in other_app_id.split(","):
+        swaymsg('[app_id="%s"] kill' % other)
     seen = {"active": False}
 
     def changed(w, _):
@@ -105,7 +106,7 @@ class WifiSettings(Adw.Application):
         self.win.set_default_size(560, 480)
         self.win.set_resizable(False)
         self.win.connect("close-request", lambda *_: self.quit() or False)
-        one_panel(self.win, "duet.quicksettings")
+        one_panel(self.win, "duet.quicksettings,duet.bluetooth")
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                       margin_top=22, margin_bottom=22, margin_start=26, margin_end=26)

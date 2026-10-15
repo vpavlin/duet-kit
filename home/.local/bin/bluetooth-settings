@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+# Bluetooth for the Duet: switch on/off, scan, pair/connect, forget. Same look as wifi-settings.
+import re, subprocess, sys, threading
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk
+
+ICON = {"bt": "", "phones": "", "refresh": "", "trash": ""}
+
+CSS = """
+window { background: #0e1216; }
+.w-title { color: #d6dde3; font-weight: bold; font-size: 15pt; }
+.w-icon { font-family: tabler-icons; font-size: 20pt; min-width: 36px; color: #9a7bff; }
+.w-small { font-family: tabler-icons; font-size: 13pt; }
+.w-name { color: #d6dde3; font-weight: bold; }
+.w-sub { color: #6b7680; font-family: monospace; font-size: 9pt; }
+.w-status { color: #f0b429; font-family: monospace; font-size: 10pt; }
+row.w-row { background: #141a20; border-radius: 12px; margin: 3px 0; padding: 6px 8px; min-height: 44px; }
+row.w-row:hover { background: #1c2229; }
+row.w-row.connected { border: 1px solid #35f0a0; }
+list { background: transparent; }
+.connected .w-icon, .connected .w-sub-ok { color: #35f0a0; }
+.w-forget { color: #e05252; background: transparent; border: none; box-shadow: none; padding: 4px 10px; }
+.w-go { background: #35f0a0; color: #07090b; font-weight: bold; border-radius: 99px; padding: 6px 22px; }
+switch { background: #1c2229; }
+switch:checked { background: #35f0a0; }
+switch slider { background: #d6dde3; }
+"""
+
+
+def swaymsg(cmd):
+    subprocess.run(["swaymsg", cmd], capture_output=True)
+
+
+def one_panel(win, other_app_ids):
+    """Only one popup panel at a time, and it goes away when you click elsewhere."""
+    for other in other_app_ids.split(","):
+        swaymsg('[app_id="%s"] kill' % other)
+    seen = {"active": False}
+
+    def changed(w, _):
+        if w.is_active():
+            seen["active"] = True
+        elif seen["active"]:
+            w.close()
+    win.connect("notify::is-active", changed)
+
+
+def btctl(*args, timeout=30):
+    try:
+        return subprocess.run(["bluetoothctl", *args], capture_output=True, text=True, timeout=timeout).stdout
+    except subprocess.TimeoutExpired:
+        return ""
+
+
+def powered():
+    return "Powered: yes" in btctl("show")
+
+
+def devices():
+    out = []
+    for line in btctl("devices").splitlines():
+        parts = line.split(" ", 2)
+        if len(parts) < 3:
+            continue
+        mac, name = parts[1], parts[2]
+        if re.fullmatch(r"[0-9A-F]{2}(-[0-9A-F]{2}){5}", name):  # nameless advertisers
+            continue
+        info = btctl("info", mac)
+        out.append({"mac": mac, "name": name, "paired": "Paired: yes" in info,
+                    "connected": "Connected: yes" in info,
+                    "audio": "Audio Sink" in info or "audio-head" in info})
+    out.sort(key=lambda d: (not d["connected"], not d["paired"], d["name"].lower()))
+    return out
+
+
+class BluetoothSettings(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="duet.bluetooth")
+        self.win = None
+        self.busy = False
+
+    def do_activate(self):
+        if self.win:  # second tap on the bar icon closes the panel
+            self.win.close()
+            return
+        provider = Gtk.CssProvider()
+        provider.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        self.win = Adw.ApplicationWindow(application=self, title="Bluetooth")
+        self.win.set_default_size(560, 480)
+        self.win.set_resizable(False)
+        self.win.connect("close-request", lambda *_: self.quit() or False)
+        one_panel(self.win, "duet.quicksettings,duet.wifi")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                      margin_top=22, margin_bottom=22, margin_start=26, margin_end=26)
+        box.set_size_request(560, 480)
+        head = Gtk.Box(spacing=12)
+        title = Gtk.Label(label="Bluetooth", xalign=0, hexpand=True)
+        title.add_css_class("w-title")
+        self.switch = Gtk.Switch(active=powered(), valign=Gtk.Align.CENTER)
+        self.switch.connect("notify::active", self.on_switch)
+        refresh = Gtk.Button(label=ICON["refresh"])
+        refresh.add_css_class("w-small")
+        refresh.add_css_class("flat")
+        refresh.connect("clicked", lambda *_: self.refresh(True))
+        head.append(title)
+        head.append(refresh)
+        head.append(self.switch)
+        box.append(head)
+
+        self.status = Gtk.Label(label=" ", xalign=0, ellipsize=3, single_line_mode=True)
+        self.status.add_css_class("w-status")
+        box.append(self.status)
+
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(self.list)
+        box.append(scroller)
+
+        done = Gtk.Button(label="Done", halign=Gtk.Align.END)
+        done.add_css_class("w-go")
+        done.connect("clicked", lambda *_: self.win.close())
+        box.append(done)
+
+        self.win.set_content(box)
+        self.win.present()
+        self.refresh(False)
+
+    # ---- data ----
+    def refresh(self, scan):
+        if not self.switch.get_active():
+            self.show([])
+            return
+        if self.busy:
+            return
+        self.busy = True
+        if scan:
+            self.note("Scanning...")
+
+        def work():
+            if scan:
+                btctl("--timeout", "8", "scan", "on", timeout=15)
+            GLib.idle_add(self.show, devices())
+        threading.Thread(target=work, daemon=True).start()
+
+    def show(self, devs):
+        self.busy = False
+        while (r := self.list.get_row_at_index(0)):
+            self.list.remove(r)
+        if not self.switch.get_active():
+            self.note("Bluetooth is off")
+            return
+        self.note("" if devs else "No devices - put one in pairing mode and tap refresh")
+        for d in devs:
+            self.list.append(self.make_row(d))
+
+    def note(self, text):
+        self.status.set_label(text or " ")
+
+    # ---- rows ----
+    def make_row(self, d):
+        row = Gtk.ListBoxRow(activatable=False)
+        row.add_css_class("w-row")
+        if d["connected"]:
+            row.add_css_class("connected")
+        line = Gtk.Box(spacing=12)
+        ic = Gtk.Label(label=ICON["phones"] if d["audio"] else ICON["bt"])
+        ic.add_css_class("w-icon")
+        names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+        nm = Gtk.Label(label=d["name"], xalign=0)
+        nm.add_css_class("w-name")
+        sub = Gtk.Label(label="connected - tap to disconnect" if d["connected"] else ("paired" if d["paired"] else "available"), xalign=0)
+        sub.add_css_class("w-sub")
+        if d["connected"]:
+            sub.add_css_class("w-sub-ok")
+        names.append(nm)
+        names.append(sub)
+        line.append(ic)
+        line.append(names)
+        if d["paired"]:
+            fg = Gtk.Button(label=ICON["trash"])
+            fg.add_css_class("w-small")
+            fg.add_css_class("w-forget")
+            fg.connect("clicked", lambda *_: self.forget(d))
+            line.append(fg)
+        tap = Gtk.GestureClick()
+        tap.connect("released", lambda *_: self.tapped(d))
+        names.add_controller(tap)
+        ic.add_controller(Gtk.GestureClick())  # keep taps on the icon from doing anything odd
+        row.set_child(line)
+        return row
+
+    # ---- actions ----
+    def tapped(self, d):
+        if d["connected"]:
+            self.run_action("Disconnecting %s..." % d["name"], [["disconnect", d["mac"]]], "")
+        elif d["paired"]:
+            self.run_action("Connecting to %s..." % d["name"], [["connect", d["mac"]]], "Could not connect - is it on and in range?")
+        else:
+            self.run_action("Pairing with %s..." % d["name"],
+                            [["pair", d["mac"]], ["trust", d["mac"]], ["connect", d["mac"]]],
+                            "Could not pair - put it in pairing mode and try again")
+
+    def forget(self, d):
+        self.run_action("Forgetting %s..." % d["name"], [["remove", d["mac"]]], "")
+
+    def run_action(self, doing, steps, fail_msg):
+        self.note(doing)
+
+        def work():
+            ok = True
+            for s in steps:
+                out = btctl(*s, timeout=40)
+                if "Failed" in out or "not available" in out:
+                    ok = False
+                    break
+            GLib.idle_add(self.after_action, "" if ok else fail_msg)
+        threading.Thread(target=work, daemon=True).start()
+
+    def after_action(self, msg):
+        self.busy = False
+        self.refresh(False)
+        if msg:
+            self.status.set_label(msg)
+        return False
+
+    def on_switch(self, sw, _):
+        threading.Thread(target=lambda: (btctl("power", "on" if sw.get_active() else "off"),
+                                         GLib.timeout_add(1200, lambda: self.refresh(False) or False)), daemon=True).start()
+        if not sw.get_active():
+            self.show([])
+
+
+if __name__ == "__main__":
+    sys.exit(BluetoothSettings().run(None))

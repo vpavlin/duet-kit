@@ -153,3 +153,6 @@ Sway's built-in `bindgesture` (touchpad only, i.e. the keyboard's Hammer pad) in
 
 ## 16. Portrait two-row bar, Bluetooth switch
 `waybar.service` now runs `~/.local/bin/waybar-launch`: landscape = the normal single bar (`config`); portrait (sway transform normal/180) = `config-portrait`, two stacked bars (row 1 workspaces/keyboard/close/power, row 2 the status icons) so nothing is pushed off the screen. `autorotate` restarts waybar when the orientation class changes. `config-portrait` is generated from `config` (split `modules-right`); regenerate it after editing `config`. Quick settings got a Bluetooth audio switch (connects/disconnects the paired audio device, e.g. Nothing Ear (2)); earbud mic (HFP) still delivers no samples, see the camera/HFP notes.
+
+## 17. Bluetooth panel
+`~/.local/bin/bluetooth-settings` (GTK4/Adw, app id `duet.bluetooth`, same look as the Wi-Fi panel): power switch, scan (refresh), tap = pair/trust/connect or disconnect, trash = forget. The bar Bluetooth icon opens it (was blueman-manager). Sway float rule, app-tabs DIALOGS and the one-panel-at-a-time logic (comma-separated list in `one_panel`) include it. After adding a new dialog app id, restart app-tabs (it keeps the list in memory).
