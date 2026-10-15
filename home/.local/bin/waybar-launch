@@ -1,0 +1,7 @@
+#!/bin/sh
+# Landscape: one bar. Portrait (sway transform 0/180): two stacked bars so everything fits.
+T=$(swaymsg -t get_outputs -r | python3 -c 'import json,sys; print(next(o["transform"] for o in json.load(sys.stdin) if o["name"]=="DSI-1"))')
+case "$T" in
+  normal|180) exec /usr/bin/waybar -c "$HOME/.config/waybar/config-portrait" ;;
+  *) exec /usr/bin/waybar ;;
+esac

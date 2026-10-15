@@ -3,7 +3,7 @@
 # Tapping the bar button again closes it. Brightness and volume apply while
 # dragging; scale applies shortly after the finger stops (re-scaling under a
 # moving finger makes the slider jump) and is saved to the sway config.
-import os, re, subprocess, sys
+import os, re, subprocess, sys, threading
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -13,7 +13,7 @@ BACKLIGHT = "/sys/class/backlight/backlight_lcd0"
 SWAY_CONFIG = os.path.expanduser("~/.config/sway/config")
 CHARGE_CONF = "/etc/default/battery-limit"  # read by battery-limit.service; owned by linux so no sudo is needed
 OUTPUT = "DSI-1"
-ICON = {"sun": "", "scale": "", "volume": "", "mic": "", "battery": "", "share": ""}
+ICON = {"sun": "", "scale": "", "volume": "", "mic": "", "battery": "", "share": "", "phones": ""}
 
 CSS = """
 window { background: #0e1216; }
@@ -38,6 +38,11 @@ scale slider { background: #d6dde3; min-width: 26px; min-height: 26px; border-ra
 #share switch { background: #1c2229; }
 #share switch:checked { background: #35f0a0; }
 #share switch slider { background: #d6dde3; }
+#phones .qs-icon { color: #9a7bff; }
+#phones .qs-sub { color: #6b7680; font-family: monospace; font-size: 9pt; }
+#phones switch { background: #1c2229; }
+#phones switch:checked { background: #35f0a0; }
+#phones switch slider { background: #d6dde3; }
 .qs-done { background: #35f0a0; color: #07090b; font-weight: bold; border-radius: 99px; padding: 6px 28px; }
 """
 
@@ -53,6 +58,20 @@ def one_panel(win, other_app_id):
         elif seen["active"]:
             w.close()
     win.connect("notify::is-active", changed)
+
+
+def bt_audio_device():
+    """(mac, name, connected) of the paired Bluetooth audio device, preferring a connected one."""
+    found = []
+    for line in run("bluetoothctl", "devices", "Paired").splitlines():
+        parts = line.split(" ", 2)
+        if len(parts) < 3:
+            continue
+        info = run("bluetoothctl", "info", parts[1])
+        if "Audio Sink" in info:
+            found.append((parts[1], parts[2], "Connected: yes" in info))
+    found.sort(key=lambda d: not d[2])
+    return found[0] if found else None
 
 
 def run(*cmd):
@@ -147,6 +166,7 @@ class QuickSettings(Adw.Application):
         box.append(self.row("charge", ICON["battery"], "Charge limit", 50, 100, 5, current_charge_limit(),
                             lambda v: "off" if v >= 100 else "%d %%" % v, self.schedule_charge))
 
+        box.append(self.phones_row())
         box.append(self.share_row())
 
         done = Gtk.Button(label="Done", halign=Gtk.Align.END)
@@ -156,6 +176,37 @@ class QuickSettings(Adw.Application):
 
         self.win.set_content(box)
         self.win.present()
+
+    def phones_row(self):
+        """Switch to connect/disconnect the paired Bluetooth audio device (headphones / earbuds)."""
+        dev = bt_audio_device()
+        grid = Gtk.Grid(column_spacing=12, row_spacing=2, name="phones")
+        ic = Gtk.Label(label=ICON["phones"])
+        ic.add_css_class("qs-icon")
+        nm = Gtk.Label(label=dev[1] if dev else "Headphones", xalign=0, hexpand=True)
+        nm.add_css_class("qs-name")
+        sub = Gtk.Label(label="not paired - pair in blueman" if not dev else ("connected" if dev[2] else "off"), xalign=0)
+        sub.add_css_class("qs-sub")
+        sw = Gtk.Switch(valign=Gtk.Align.CENTER, sensitive=bool(dev))
+        if dev:
+            sw.set_active(dev[2])
+
+            def toggled(w, _):
+                on = w.get_active()
+                sub.set_label("connecting..." if on else "disconnecting...")
+                w.set_sensitive(False)
+
+                def work():
+                    subprocess.run(["bluetoothctl", "connect" if on else "disconnect", dev[0]], capture_output=True, timeout=30)
+                    ok = bt_audio_device()
+                    GLib.idle_add(lambda: (sub.set_label("connected" if ok and ok[2] else "off"), w.set_sensitive(True)) and False)
+                threading.Thread(target=work, daemon=True).start()
+            sw.connect("notify::active", toggled)
+        grid.attach(ic, 0, 0, 1, 2)
+        grid.attach(nm, 1, 0, 1, 1)
+        grid.attach(sub, 1, 1, 1, 1)
+        grid.attach(sw, 2, 0, 1, 2)
+        return grid
 
     def share_row(self):
         """Switch for the VNC screen share (screen-share.service); the mesh is the authentication."""
