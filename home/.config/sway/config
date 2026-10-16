@@ -99,6 +99,8 @@ bindsym F13 exec systemctl suspend
 
 # Search+F1..F10 = the real function keys (like ChromeOS); sway has no bindings in this mode
 mode "fkey" {
+    # sway drops an empty mode block, so give it one binding nothing will press
+    bindsym Mod4+Mod1+Shift+Control+F12 nop
 }
 bindsym $mod+F1 exec ~/.local/bin/fkey 1
 bindsym $mod+F2 exec ~/.local/bin/fkey 2
