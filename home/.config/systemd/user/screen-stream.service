@@ -1,8 +1,0 @@
-[Unit]
-Description=Stream the Duet screen as low-latency MPEG-TS (wf-recorder), one viewer at a time
-[Service]
-Environment=WAYLAND_DISPLAY=wayland-1
-# 1280 wide, ultrafast x264, served as HTTP on 127.0.0.1:5901, one viewer at a time; the shrooms daemon publishes it as http://stream.duet.office.mesh/ (port 80). Play: mpv --profile=low-latency http://stream.duet.office.mesh
-ExecStart=/bin/sh -c "/usr/bin/wf-recorder -o DSI-1 -c libx264 -p preset=ultrafast -p tune=zerolatency -r 20 -D -F transpose=1,scale=1280:-2 -m mpegts -f pipe:1 2>/dev/null | /usr/bin/ffmpeg -loglevel error -f mpegts -i - -c copy -f mpegts -listen 1 http://127.0.0.1:5901"
-Restart=always
-RestartSec=1
