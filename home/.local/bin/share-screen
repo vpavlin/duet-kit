@@ -1,0 +1,30 @@
+#!/bin/sh
+# Browser screen sharing (Jitsi etc.) with the right rotation.
+# The wlr screencast portal captures an output in its native (rotated) orientation, so we mirror the tablet
+# screen upright onto a virtual HEADLESS output and point the portal at that one.
+# The virtual output needs an explicit refresh rate (@60Hz): without it the portal advertises an invalid
+# frame-rate range and the browser's capture silently fails ("empty" shared screen).
+#   share-screen on | off | status
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1}
+export SWAYSOCK=${SWAYSOCK:-$(ls "$XDG_RUNTIME_DIR"/sway-ipc.*.sock | head -1)}
+CONF="$HOME/.config/xdg-desktop-portal-wlr/config"
+headless() { swaymsg -t get_outputs -r | python3 -c 'import json,sys; print(" ".join(o["name"] for o in json.load(sys.stdin) if o["name"].startswith("HEADLESS")))'; }
+case "$1" in
+  on)
+    for h in $(headless); do swaymsg output "$h" unplug >/dev/null; done
+    swaymsg create_output >/dev/null
+    H=$(headless | awk '{print $1}')
+    swaymsg output "$H" mode 1600x1000@60Hz position 6000 0 >/dev/null   # beyond the screen: the mouse cannot wander onto it
+    sed -i "s/^output_name=.*/output_name=$H/" "$CONF"
+    systemctl --user restart xdg-desktop-portal-wlr
+    systemctl --user stop share-mirror 2>/dev/null
+    systemd-run --user --unit=share-mirror --collect wl-mirror --fullscreen-output "$H" --scaling fit --no-show-cursor DSI-1 >/dev/null 2>&1
+    ;;
+  off)
+    systemctl --user stop share-mirror 2>/dev/null
+    for h in $(headless); do swaymsg output "$h" unplug >/dev/null; done
+    ;;
+  status) systemctl --user is-active share-mirror ;;
+  *) echo "usage: share-screen on|off|status" >&2; exit 2 ;;
+esac
