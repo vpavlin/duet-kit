@@ -96,3 +96,17 @@ bindsym F8 exec pactl set-sink-mute @DEFAULT_SINK@ toggle
 bindsym F9 exec pactl set-sink-volume @DEFAULT_SINK@ -5%
 bindsym F10 exec pactl set-sink-volume @DEFAULT_SINK@ +5%
 bindsym F13 exec systemctl suspend
+
+# Search+F1..F10 = the real function keys (like ChromeOS); sway has no bindings in this mode
+mode "fkey" {
+}
+bindsym $mod+F1 exec ~/.local/bin/fkey 1
+bindsym $mod+F2 exec ~/.local/bin/fkey 2
+bindsym $mod+F3 exec ~/.local/bin/fkey 3
+bindsym $mod+F4 exec ~/.local/bin/fkey 4
+bindsym $mod+F5 exec ~/.local/bin/fkey 5
+bindsym $mod+F6 exec ~/.local/bin/fkey 6
+bindsym $mod+F7 exec ~/.local/bin/fkey 7
+bindsym $mod+F8 exec ~/.local/bin/fkey 8
+bindsym $mod+F9 exec ~/.local/bin/fkey 9
+bindsym $mod+F10 exec ~/.local/bin/fkey 10

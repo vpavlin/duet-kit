@@ -168,3 +168,5 @@ Clicking the battery percentage in the bar runs `~/.local/bin/battery-info`: a m
 
 ## 21. Keyboard top row
 The detachable keyboard (Google Hammer) sends plain F1-F10 and F13 for its top row (no XF86 keys). Sway binds them Chromebook-style: F1/F2 = Alt+Left/Right (back/forward in the browser, via wtype), F3 = Ctrl+R, F4 = fullscreen toggle, F5 = next workspace, F6/F7 = brightness -/+10%, F8 = mute, F9/F10 = volume -/+5%, F13 (lock key) = suspend (a screen lock was avoided: swaylock has no on-screen keyboard, so a detached keyboard could lock you out). To find key codes: `sudo evtest /dev/input/event8` (check the node with `cat /proc/bus/input/devices`), filter out letters so typing is not logged.
+
+Search (the Chromebook key, Super) + F1..F10 types the real F-key: `~/.local/bin/fkey N` switches sway to an empty mode "fkey", sends the key with wtype and switches back (the bare keys are bound to media actions above).
