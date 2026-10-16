@@ -159,3 +159,6 @@ Sway's built-in `bindgesture` (touchpad only, i.e. the keyboard's Hammer pad) in
 
 ## 18. Screen sharing in the browser (Jitsi etc.)
 xdg-desktop-portal-wlr is unmasked and preferred for ScreenCast (`~/.config/xdg-desktop-portal/sway-portals.conf`), configured without a chooser to share DSI-1 (`~/.config/xdg-desktop-portal-wlr/config`). Brave runs with `--enable-features=WebRtcPipeWireCamera,WebRTCPipeWireCapturer` (needs a Brave restart). Needs the camera-only PipeWire service running.
+
+## 19. Battery time notification
+Clicking the battery percentage in the bar runs `~/.local/bin/battery-info`: a mako notification with the estimated time left and the time it will be empty (from the gauge `time_to_empty_avg`, falling back to energy/power), or, on AC, charging time to the charge limit / "holding at N%" while the battery-limit service holds charge. Needs `config-portrait` regenerated from `config` after editing the bar.

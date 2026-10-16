@@ -1,0 +1,33 @@
+#!/bin/bash
+# Notification with the estimated battery time (click on the bar's battery percentage).
+B=/sys/class/power_supply/sbs-12-000b
+AC=$(cat /sys/class/power_supply/CROS_USBPD_CHARGER0/online 2>/dev/null || echo 0)
+cap=$(cat $B/capacity)
+status=$(cat $B/status)
+read -r ef en cur v < <(printf '%s %s %s %s\n' "$(cat $B/energy_full)" "$(cat $B/energy_now)" "$(cat $B/current_now)" "$(cat $B/voltage_now)")
+upper=$(sed -n 's/^UPPER=//p' /etc/default/battery-limit 2>/dev/null); upper=${upper:-100}
+fmt() { s=$1; printf '%dh %02dmin' $((s/3600)) $(((s%3600)/60)); }
+watts=$(python3 -c "print(round(abs($cur)*$v/1e12,1))")
+if [ "$AC" = 1 ]; then
+  if [ "$cap" -ge "$upper" ] || { [ "$upper" -lt 100 ] && [ "$cap" -ge $((upper-5)) ] && [ "$status" != Charging ]; }; then
+    title="On AC - holding at $upper%"; body="Charge limit $upper% (battery $cap%). Charging resumes below $((upper-5))%."
+  elif [ "$cap" -ge 100 ]; then
+    title="Fully charged"; body="On AC."
+  else
+    target=$(python3 -c "print(int($ef*$upper/100))")
+    if [ "$cur" -gt 50000 ]; then
+      secs=$(python3 -c "print(max(0,int(($target-$en)/($cur*$v/1e6)*3600)))")
+      title="Charging - $(fmt "$secs") to $upper%"; body="Battery $cap%, charging at ${watts} W."
+    else
+      title="On AC - $cap%"; body="Not charging right now (charge limit $upper%)."
+    fi
+  fi
+else
+  tte=$(cat $B/time_to_empty_avg 2>/dev/null)
+  if [ -z "$tte" ] || [ "$tte" -le 60 ] || [ "$tte" -gt 360000 ]; then
+    tte=$(python3 -c "print(int($en/max(1,abs($cur)*$v/1e6)*3600))")
+  fi
+  now=$(date +%s); empty=$(date -d "@$((now+tte))" +%H:%M)
+  title="$(fmt "$tte") left (empty about $empty)"; body="Battery $cap%, using about ${watts} W."
+fi
+notify-send -a battery -t 8000 -h string:x-canonical-private-synchronous:battery-info "$title" "$body"
