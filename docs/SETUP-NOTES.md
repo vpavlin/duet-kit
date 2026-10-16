@@ -162,3 +162,6 @@ xdg-desktop-portal-wlr is unmasked and preferred for ScreenCast (`~/.config/xdg-
 
 ## 19. Battery time notification
 Clicking the battery percentage in the bar runs `~/.local/bin/battery-info`: a mako notification with the estimated time left and the time it will be empty (from the gauge `time_to_empty_avg`, falling back to energy/power), or, on AC, charging time to the charge limit / "holding at N%" while the battery-limit service holds charge. Needs `config-portrait` regenerated from `config` after editing the bar.
+
+## 20. App launcher
+`~/.local/bin/duet-launcher` (GTK4/Adw, app id `duet.launcher`) replaces fuzzel on the bar launcher icon and Mod+d: a search box, the 8 most used apps as big tiles (usage counts in `~/.local/share/duet-launcher/usage.json`; padded with a preferred list until there is history), the full app list below, and wide result rows while typing (Enter launches the top hit, Escape or a tap outside closes). Apps hidden on a tablet are listed in `HIDE` in the script. Missing theme icons fall back to a neutral icon; `logos-basecamp.svg` is a hand-made icon because the Basecamp AppImage ships none. Float rule / app-tabs DIALOGS include `duet.launcher`; fuzzel config is left in place as a fallback.

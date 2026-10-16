@@ -28,7 +28,7 @@
     "custom/launcher": {
       "format": "",
       "tooltip": false,
-      "on-click": "fuzzel"
+      "on-click": "~/.local/bin/duet-launcher"
     },
     "pulseaudio": {
       "format": "<span font=\"tabler-icons 15\" rise=\"-2pt\"></span>  {volume}%",
@@ -154,7 +154,7 @@
     "custom/launcher": {
       "format": "",
       "tooltip": false,
-      "on-click": "fuzzel"
+      "on-click": "~/.local/bin/duet-launcher"
     },
     "pulseaudio": {
       "format": "<span font=\"tabler-icons 15\" rise=\"-2pt\"></span>  {volume}%",

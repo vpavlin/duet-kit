@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+# App launcher for the Duet: big tiles for the apps you use most, a wide list for search results.
+# Same look as the other panels (Shrooms palette). Tap outside or press Escape to close.
+import json, os, subprocess, sys
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
+
+PREFER = ["brave-browser", "foot", "logos-basecamp", "duet-camera", "htop", "org.gnome.Loupe", "duet-camera-settings"]
+USAGE = os.path.expanduser("~/.local/share/duet-launcher/usage.json")
+HIDE = {"org.gnome.Settings", "nm-connection-editor", "foot-server", "footclient", "blueman-manager"}  # clutter on a tablet
+
+CSS = """
+window { background: #0e1216; }
+.l-title { color: #6b7680; font-family: monospace; font-size: 10pt; letter-spacing: 2px; }
+entry { background: #07090b; color: #d6dde3; border: 1px solid #1c2229; border-radius: 12px; min-height: 48px; font-size: 14pt; padding: 0 14px; }
+entry:focus-within { border-color: #35f0a0; }
+button.tile { background: #141a20; border: 1px solid #1c2229; border-radius: 16px; padding: 14px 6px; min-width: 140px; }
+button.tile:hover, button.tile:active { background: #1c2229; border-color: #35f0a0; }
+.tile-name { color: #d6dde3; font-weight: bold; font-size: 10pt; }
+row.l-row { background: #141a20; border-radius: 12px; margin: 3px 0; padding: 6px 12px; min-height: 52px; }
+row.l-row:hover, row.l-row:selected { background: #1c2229; }
+row.l-row:selected .l-name { color: #35f0a0; }
+.l-name { color: #d6dde3; font-weight: bold; font-size: 12pt; }
+.l-sub { color: #6b7680; font-size: 9pt; }
+list { background: transparent; }
+scrolledwindow { background: transparent; }
+"""
+
+
+def swaymsg(cmd):
+    subprocess.run(["swaymsg", cmd], capture_output=True)
+
+
+def one_panel(win):
+    for other in ("duet.quicksettings", "duet.wifi", "duet.bluetooth", "duet.display"):
+        swaymsg('[app_id="%s"] kill' % other)
+    seen = {"active": False}
+
+    def changed(w, _):
+        if w.is_active():
+            seen["active"] = True
+        elif seen["active"]:
+            w.close()
+    win.connect("notify::is-active", changed)
+
+
+def load_usage():
+    try:
+        with open(USAGE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def apps():
+    out = []
+    for a in Gio.AppInfo.get_all():
+        if not a.should_show() or a.get_id() is None:
+            continue
+        if a.get_id().removesuffix(".desktop") in HIDE:
+            continue
+        out.append(a)
+    return sorted(out, key=lambda a: a.get_display_name().lower())
+
+
+class Launcher(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="duet.launcher")
+        self.win = None
+
+    def do_activate(self):
+        if self.win:
+            self.win.close()
+            return
+        provider = Gtk.CssProvider()
+        provider.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        self.apps = apps()
+        self.usage = load_usage()
+        self.win = Adw.ApplicationWindow(application=self, title="Apps")
+        self.win.set_default_size(760, 680)
+        self.win.set_resizable(False)
+        self.win.connect("close-request", lambda *_: self.quit() or False)
+        one_panel(self.win)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14,
+                      margin_top=22, margin_bottom=22, margin_start=26, margin_end=26)
+        box.set_size_request(760, 680)
+        self.entry = Gtk.SearchEntry(placeholder_text="Search apps", hexpand=True)
+        self.entry.connect("search-changed", self.on_search)
+        self.entry.connect("activate", self.on_activate)
+        box.append(self.entry)
+
+        self.stack = Gtk.Stack()
+        self.stack.set_vexpand(True)
+
+        # home: frequent tiles, then every app
+        home = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.top_label = Gtk.Label(label="FREQUENT", xalign=0)
+        self.top_label.add_css_class("l-title")
+        home.append(self.top_label)
+        self.grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=4, min_children_per_line=4,
+                                column_spacing=12, row_spacing=12, homogeneous=True)
+        home.append(self.grid)
+        all_label = Gtk.Label(label="ALL APPS", xalign=0)
+        all_label.add_css_class("l-title")
+        home.append(all_label)
+        self.all_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.all_list.connect("row-activated", lambda lb, row: self.launch(row.app))
+        sc_all = Gtk.ScrolledWindow(vexpand=True)
+        sc_all.set_child(self.all_list)
+        home.append(sc_all)
+        self.stack.add_named(home, "home")
+
+        # search results: wide rows
+        self.results = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.results.connect("row-activated", lambda lb, row: self.launch(row.app))
+        sc = Gtk.ScrolledWindow(vexpand=True)
+        sc.set_child(self.results)
+        self.stack.add_named(sc, "search")
+        box.append(self.stack)
+
+        key = Gtk.EventControllerKey()
+        key.connect("key-pressed", lambda c, kv, kc, st: self.win.close() or True if kv == Gdk.KEY_Escape else False)
+        self.win.add_controller(key)
+
+        self.win.set_content(box)
+        self.fill_home()
+        self.win.present()
+        self.entry.grab_focus()
+
+    # ---- content ----
+    def score(self, a):
+        return self.usage.get(a.get_id(), 0)
+
+    def fill_home(self):
+        ranked = [a for a in sorted(self.apps, key=lambda a: -self.score(a)) if self.score(a) > 0][:8]
+        if len(ranked) < 8:  # not enough history yet: pad with the usual suspects, then the rest
+            by_id = {a.get_id().removesuffix(".desktop"): a for a in self.apps}
+            favs = [by_id[i] for i in PREFER if i in by_id]
+            for a in favs + self.apps:
+                if a not in ranked and len(ranked) < 8:
+                    ranked.append(a)
+        for a in ranked:
+            self.grid.append(self.tile(a))
+        for a in self.apps:
+            self.all_list.append(self.row(a))
+
+    def icon(self, a, size):
+        img = Gtk.Image()
+        ic = a.get_icon()
+        theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        usable = isinstance(ic, Gio.FileIcon) or (isinstance(ic, Gio.ThemedIcon) and any(theme.has_icon(n) for n in ic.get_names()))
+        if ic and usable:
+            img.set_from_gicon(ic)
+        else:  # the theme lacks it: a neutral icon beats the broken-image symbol
+            img.set_from_icon_name("application-x-executable")
+        img.set_pixel_size(size)
+        return img
+
+    def tile(self, a):
+        b = Gtk.Button()
+        b.add_css_class("tile")
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        inner.append(self.icon(a, 64))
+        nm = Gtk.Label(label=a.get_display_name(), ellipsize=3, max_width_chars=14)
+        nm.add_css_class("tile-name")
+        inner.append(nm)
+        b.set_child(inner)
+        b.connect("clicked", lambda *_: self.launch(a))
+        return b
+
+    def row(self, a):
+        r = Gtk.ListBoxRow()
+        r.add_css_class("l-row")
+        r.app = a
+        line = Gtk.Box(spacing=14)
+        line.append(self.icon(a, 40))
+        names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER, hexpand=True)
+        nm = Gtk.Label(label=a.get_display_name(), xalign=0)
+        nm.add_css_class("l-name")
+        names.append(nm)
+        desc = a.get_description() or a.get_generic_name() or ""
+        if desc:
+            sub = Gtk.Label(label=desc, xalign=0, ellipsize=3)
+            sub.add_css_class("l-sub")
+            names.append(sub)
+        line.append(names)
+        r.set_child(line)
+        return r
+
+    # ---- search ----
+    def match(self, a, q):
+        name = a.get_display_name().lower()
+        blob = " ".join([name, (a.get_generic_name() or "").lower(), (a.get_description() or "").lower(),
+                         " ".join(getattr(a, "get_keywords", lambda: [])() or []).lower()])
+        if name.startswith(q):
+            return 0
+        if q in name:
+            return 1
+        if q in blob:
+            return 2
+        return None
+
+    def on_search(self, entry):
+        q = entry.get_text().strip().lower()
+        if not q:
+            self.stack.set_visible_child_name("home")
+            return
+        while (r := self.results.get_row_at_index(0)):
+            self.results.remove(r)
+        hits = []
+        for a in self.apps:
+            m = self.match(a, q)
+            if m is not None:
+                hits.append((m, -self.score(a), a.get_display_name().lower(), a))
+        for *_, a in sorted(hits, key=lambda h: h[:3]):
+            self.results.append(self.row(a))
+        first = self.results.get_row_at_index(0)
+        if first:
+            self.results.select_row(first)
+        self.stack.set_visible_child_name("search")
+
+    def on_activate(self, entry):
+        if self.stack.get_visible_child_name() == "search":
+            row = self.results.get_selected_row() or self.results.get_row_at_index(0)
+            if row:
+                self.launch(row.app)
+
+    # ---- launch ----
+    def launch(self, a):
+        self.usage[a.get_id()] = self.usage.get(a.get_id(), 0) + 1
+        os.makedirs(os.path.dirname(USAGE), exist_ok=True)
+        with open(USAGE, "w") as f:
+            json.dump(self.usage, f)
+        path = a.get_filename()
+        if path:
+            subprocess.Popen(["gio", "launch", path], start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            a.launch([], None)
+        self.win.close()
+
+
+if __name__ == "__main__":
+    sys.exit(Launcher().run(None))
