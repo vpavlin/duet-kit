@@ -83,3 +83,16 @@ no_focus [app_id="at.yrlf.wl_mirror"]
 # touchpad: 3-finger swipe switches workspace
 bindgesture swipe:3:right workspace prev_on_output
 bindgesture swipe:3:left workspace next_on_output
+
+# keyboard top row (Chromebook layout; the keys send plain F1-F10 and F13)
+bindsym F1 exec wtype -M alt -k Left -m alt
+bindsym F2 exec wtype -M alt -k Right -m alt
+bindsym F3 exec wtype -M ctrl -k r -m ctrl
+bindsym F4 fullscreen toggle
+bindsym F5 workspace next_on_output
+bindsym F6 exec brightnessctl set 10%-
+bindsym F7 exec brightnessctl set +10%
+bindsym F8 exec pactl set-sink-mute @DEFAULT_SINK@ toggle
+bindsym F9 exec pactl set-sink-volume @DEFAULT_SINK@ -5%
+bindsym F10 exec pactl set-sink-volume @DEFAULT_SINK@ +5%
+bindsym F13 exec systemctl suspend
