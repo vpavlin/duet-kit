@@ -1,0 +1,10 @@
+Running kernel blob (KERN-B p4), from `futility vbutil_kernel --get-vmlinuz` + `mkimage -l`:
+FIT description: duet-camera 6.12.50-stb-cbm-cam (created Wed Oct 7 2026)
+ kernel-1   AArch64 Linux Image, lzma compressed, 8.0 MiB, load/entry 0x0
+ fdt-1      mt8183-kukui-krane-sku176 (this device), fdt-2 mt8183-kukui-krane-sku0
+ ramdisk-1  uncompressed initramfs 18.5 MiB
+ conf-1 = kernel-1 + ramdisk-1 + fdt-1 (default, sku176); conf-2 = ... + fdt-2
+vbutil_kernel blob: keyblock flags !DEV DEV !REC !MINIOS (devkeys), data key RSA2048 SHA256 v1, kernel version 1,
+body load address 0x100000, body 0x1a99000, bootloader size 0x1000.
+Cmdline (the line after "Config:" in vbutil_kernel --verify; see cmdline-kern-b-blob.txt).
+So depthcharge on krane boots a FIT with an lzma kernel AND a ramdisk (works today). lz4 is also supported by depthcharge in general (not tested here).

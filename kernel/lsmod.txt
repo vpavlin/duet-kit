@@ -1,0 +1,92 @@
+Module                  Size  Used by
+at24                   24576  0
+ath                    32768  1 ath10k_core
+ath10k_core           385024  1 ath10k_sdio
+ath10k_sdio            24576  0
+autofs4                36864  2
+binfmt_misc            16384  1
+bluetooth             516096  31 btqca,hci_uart,btbcm,bnep,rfcomm
+bnep                   20480  2
+btbcm                  16384  1 hci_uart
+btqca                  16384  1 hci_uart
+cbmem                  12288  0
+cfg80211              446464  3 ath,mac80211,ath10k_core
+coresight              69632  1 coresight_cpu_debug
+coresight_cpu_debug    16384  0
+cros_ec_chardev        12288  0
+cros_ec_light_prox     12288  0
+cros_ec_sensors        12288  0
+cros_ec_sensors_core    20480  2 cros_ec_light_prox,cros_ec_sensors
+cros_ec_typec          20480  0
+cros_usbpd_charger     12288  0
+cros_usbpd_logger      12288  0
+dw9768                 12288  3
+ecc                    36864  1 ecdh_generic
+ecdh_generic           16384  2 bluetooth
+fuse                  143360  21
+governor_passive       12288  0
+hci_uart               86016  0
+hid_multitouch         24576  0
+i2c_hid                16384  1 i2c_hid_of
+i2c_hid_of             12288  0
+industrialio_triggered_buffer    12288  1 cros_ec_sensors_core
+ip_tables              32768  0
+ipv6                  495616  174
+kfifo_buf              12288  2 industrialio_triggered_buffer,cros_ec_sensors_core
+led_class_multicolor    12288  1 leds_cros_ec
+leds_cros_ec           12288  0
+mac80211              598016  1 ath10k_core
+mc                     57344  13 v4l2_async,videodev,ov02a10,dw9768,ov8856,videobuf2_v4l2,mtk_seninf,mtk_camsv,videobuf2_common,mtk_vcodec_dec,v4l2_mem2mem
+mt6577_auxadc          16384  0
+mt8183_mt6358_ts3a227_max98357    24576  2
+mtk_camsv              28672  6
+mtk_cci_devfreq        12288  0
+mtk_jpeg               32768  0
+mtk_jpeg_dec_hw        12288  1 mtk_jpeg
+mtk_jpeg_enc_hw        12288  1 mtk_jpeg
+mtk_mdp3               81920  0
+mtk_pmic_keys          12288  0
+mtk_rpmsg              12288  1 mtk_scp
+mtk_scp                28672  2 mtk_vcodec_common,mtk_mdp3
+mtk_scp_ipi            12288  3 mtk_vcodec_common,mtk_scp,mtk_mdp3
+mtk_seninf             24576  20
+mtk_svs                53248  0
+mtk_vcodec_common      16384  2 mtk_vcodec_dbgfs,mtk_vcodec_dec
+mtk_vcodec_dbgfs       12288  1 mtk_vcodec_dec
+mtk_vcodec_dec        106496  0
+mtk_vpu                20480  1 mtk_vcodec_common
+nf_tables             253952  0
+nfnetlink              20480  2 nf_tables
+onboard_usb_dev        20480  0
+ov02a10                16384  5
+ov8856                 20480  0
+phy_mtk_mipi_csi_0_5_mt8183    12288  2
+rfcomm                 49152  6
+rfkill                 28672  9 bluetooth,cfg80211
+rtc_mt6397             12288  1
+sbs_battery            16384  0
+snd_seq                73728  1 snd_seq_dummy
+snd_seq_device         12288  1 snd_seq
+snd_seq_dummy          12288  0
+snd_soc_bt_sco         12288  1
+snd_soc_max98357a      12288  1
+snd_soc_mt6358         57344  1
+snd_soc_mt8183_afe    118784  3 mt8183_mt6358_ts3a227_max98357
+snd_soc_mtk_common     28672  1 snd_soc_mt8183_afe
+snd_soc_ts3a227e       12288  1 mt8183_mt6358_ts3a227_max98357
+tpm_tis_core           24576  1 tpm_tis_spi
+tpm_tis_spi            16384  0
+tun                    53248  2
+typec                  77824  1 cros_ec_typec
+uinput                 20480  0
+v4l2_async             20480  6 ov02a10,dw9768,v4l2_fwnode,ov8856,mtk_seninf,mtk_camsv
+v4l2_fwnode            20480  8 ov02a10,ov8856,mtk_seninf
+v4l2_h264              12288  1 mtk_vcodec_dec
+v4l2_mem2mem           36864  5 mtk_jpeg,mtk_mdp3,mtk_jpeg_dec_hw,mtk_jpeg_enc_hw,mtk_vcodec_dec
+v4l2_vp9               20480  1 mtk_vcodec_dec
+videobuf2_common       57344  10 mtk_jpeg,mtk_mdp3,videobuf2_dma_contig,mtk_jpeg_dec_hw,videobuf2_v4l2,mtk_camsv,mtk_jpeg_enc_hw,mtk_vcodec_dec,v4l2_mem2mem,videobuf2_memops
+videobuf2_dma_contig    16384  4 mtk_jpeg,mtk_mdp3,mtk_camsv,mtk_vcodec_dec
+videobuf2_memops       12288  1 videobuf2_dma_contig
+videobuf2_v4l2         28672  5 mtk_jpeg,mtk_mdp3,mtk_camsv,mtk_vcodec_dec,v4l2_mem2mem
+videodev              253952  32 v4l2_async,ov02a10,dw9768,mtk_jpeg,v4l2_fwnode,ov8856,mtk_mdp3,videobuf2_v4l2,mtk_seninf,mtk_camsv,mtk_vcodec_dec,v4l2_mem2mem
+x_tables               45056  1 ip_tables

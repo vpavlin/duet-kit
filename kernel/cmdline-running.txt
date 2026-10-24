@@ -1,0 +1,1 @@
+cros_secure root=LABEL=rootpart console=tty1 rootwait ro fsck.fix=yes fsck.repair=yes net.ifnames=0 quiet splash  KERNEL_HASH=22e0e68dfe2dd93ce7c30f827c4a8653145762bee64c762b9f5bf41207db563a 
