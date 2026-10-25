@@ -14,5 +14,6 @@ touch /home/linux/duet/basecampos/.armed
 echo "$LABEL" > /home/linux/duet/basecampos/CURRENT-EXPERIMENT.txt
 echo "armed $LABEL: p2 prio $(cgpt show -i 2 -P $D | tail -1) tries $(cgpt show -i 2 -T $D | tail -1)"
 sync
-systemd-run --on-active=20 systemctl reboot >/dev/null
+# idle-suspend can race the reboot ("suspend already in progress"): retry, then force
+systemd-run --on-active=20 /bin/sh -c "systemctl reboot || { sleep 20; systemctl reboot || systemctl reboot -f; }" >/dev/null
 echo "reboot in 20 s"
