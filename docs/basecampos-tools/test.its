@@ -1,0 +1,15 @@
+/dts-v1/;
+/ {
+    description = "BasecampOS test (our kernel, no initrd)";
+    #address-cells = <1>;
+    images {
+        kernel-1 { description = "Image"; data = /incbin/("./kernel.lzma"); type = "kernel"; arch = "arm64"; os = "linux"; compression = "lzma"; load = <0>; entry = <0>; hash-1 { algo = "crc32"; }; };
+        fdt-1 { description = "mt8183-kukui-krane-sku176"; data = /incbin/("./krane-sku176.dtb"); type = "flat_dt"; arch = "arm64"; compression = "none"; hash-1 { algo = "crc32"; }; };
+        fdt-2 { description = "mt8183-kukui-krane-sku0"; data = /incbin/("./krane-sku0.dtb"); type = "flat_dt"; arch = "arm64"; compression = "none"; hash-1 { algo = "crc32"; }; };
+    };
+    configurations {
+        default = "conf-1";
+        conf-1 { description = "krane-sku176"; kernel = "kernel-1"; fdt = "fdt-1"; };
+        conf-2 { description = "krane-sku0"; kernel = "kernel-1"; fdt = "fdt-2"; };
+    };
+};
